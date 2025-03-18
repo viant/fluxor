@@ -1,0 +1,22 @@
+init:
+  x: 0
+
+pipeline:
+  task1:
+    action: system/executor
+    commands:
+        - echo "task1 $x"
+
+  task2:
+    subTask:
+      dependsOn: taskZ
+      action: printer:print
+      input:
+        message: $task1.Output
+
+
+dependencies:
+  taskZ:
+    action: printer:print
+    input:
+      message: "taskZ"
