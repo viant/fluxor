@@ -82,62 +82,75 @@ go get github.com/viant/fluxor
 package main
 
 import (
-    "context"
-    "github.com/viant/fluxor/extension"
-    "github.com/viant/fluxor/model"
-    "github.com/viant/fluxor/service/allocator"
-    "github.com/viant/fluxor/service/dao/workflow"
-    "github.com/viant/fluxor/service/executor"
-    "github.com/viant/fluxor/service/messaging/memory"
-    "github.com/viant/fluxor/service/processor"
-    "log"
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/viant/afs"
+	_ "github.com/viant/afs/embed"
+	"github.com/viant/fluxor/extension"
+	"github.com/viant/fluxor/model/execution"
+	"github.com/viant/fluxor/service/action/system/executor"
+	"github.com/viant/fluxor/service/allocator"
+	ememory "github.com/viant/fluxor/service/dao/execution/memory"
+	pmemory "github.com/viant/fluxor/service/dao/process/memory"
+	"github.com/viant/fluxor/service/dao/workflow"
+	texecutor "github.com/viant/fluxor/service/executor"
+	mmemory "github.com/viant/fluxor/service/messaging/memory"
+	"time"
+	"github.com/viant/fluxor/service/meta"
+	"github.com/viant/fluxor/service/processor"
 )
 
 func main() {
-    ctx := context.Background()
-    
-    // Initialize components
-    actions := extension.NewActions()
-    
-    // Register custom actions
-    // actions.Register(myCustomAction)
-    
-    // Create task executor
-    execSvc := executor.NewService(actions)
-    
-    // Create in-memory message queue
-    queue := memory.NewQueue(memory.DefaultConfig())
-    
-    // Load workflow definition
-    workflowService := workflow.New()
-    myWorkflow, err := workflowService.Load(ctx, "path/to/workflow.yaml")
-    if err != nil {
-        log.Fatalf("Failed to load workflow: %v", err)
-    }
-    
-    // Create and start the processor
-    procSvc, err := processor.New(
-        processor.WithExecutor(execSvc),
-        processor.WithMessageQueue(queue),
-        processor.WithWorkers(5),
-    )
-    if err != nil {
-        log.Fatalf("Failed to create processor: %v", err)
-    }
-    
-    // Start a workflow process
-    process, err := procSvc.StartProcess(ctx, myWorkflow, nil, nil)
-    if err != nil {
-        log.Fatalf("Failed to start process: %v", err)
-    }
-    
-    log.Printf("Process started: %s", process.ID)
-    
-    // Do other things while workflow executes
-    
-    // Shutdown when done
-    procSvc.Shutdown()
+	runIt()
 }
+
+func runIt() error {
+	ctx := context.Background()
+
+	// Initialize components
+	actions := extension.NewActions()
+
+	// Register custom actions
+	// actions.Register(myCustomAction)
+	actions.Register(executor.New())
+
+
+	fs := afs.New()
+	metaService := meta.New(fs, "file:///workflowBaseDir")
+	workflowDao := workflow.New(workflow.WithRootTaskNodeName("stage"), workflow.WithMetaService(metaService))
+
+
+
+	queue := mmemory.NewQueue[execution.Execution](mmemory.DefaultConfig())
+	processorDao := pmemory.New()
+	taskExecutionDao := ememory.New()
+	
+	anExecutor := texecutor.NewService(actions)
+	anAllocator := allocator.New(processorDao, taskExecutionDao, queue, allocator.DefaultConfig())
+	aProcessor, err := processor.New(
+		processor.WithTaskExecutor(anExecutor),
+		processor.WithMessageQueue(queue),
+		processor.WithWorkers(1),
+		processor.WithTaskExecutionDAO(taskExecutionDao),
+		processor.WithProcessDAO(processorDao))
+	if err != nil {
+		return fmt.Errorf("failed to create processor: %w", err)
+	}
+
+	if err = aProcessor.Start(ctx);err != nil {
+        return err
+    }
+	var initialState = make(map[string]interface{})
+	initialState["attr1"] = 1
+	aWorkflow, err := workflowDao.Load(ctx, "intent/coding.yaml")
+	_, err = aProcessor.StartProcess(ctx, aWorkflow, nil, initialState)
+    if err != nil {
+		return err
+    }
+	return anAllocator.Start(ctx)
+}
+
 ```
 
 ## Defining Workflows
