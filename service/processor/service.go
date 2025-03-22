@@ -68,7 +68,6 @@ func New(options ...Option) (*Service, error) {
 	if s.executor == nil {
 		return nil, fmt.Errorf("executor is required")
 	}
-
 	if s.queue == nil {
 		return nil, fmt.Errorf("message queue is required")
 	}
@@ -130,7 +129,7 @@ func (w *worker) run() {
 }
 
 // StartProcess begins execution of a workflow
-func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, customPath []string, init map[string]interface{}) (*execution.Process, error) {
+func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, customTasks []string, init map[string]interface{}) (*execution.Process, error) {
 	if workflow == nil {
 		return nil, fmt.Errorf("workflow cannot be nil")
 	}

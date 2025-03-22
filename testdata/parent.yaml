@@ -1,0 +1,17 @@
+init:
+  i: 0
+pipeline:
+  loop:
+    action: printer:print
+    input:
+      message: 'Iteration: $i'
+    post:
+      i: ${i + 1}
+
+
+  repeat:
+    transition:
+      - when: $i < 3
+        next: loop
+
+

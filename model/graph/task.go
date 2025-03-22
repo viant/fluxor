@@ -29,8 +29,8 @@ type (
 	}
 
 	Template struct {
-		*Task
-		Selector string `json:"selector,omitempty" yaml:"selector,omitempty"`
+		Task     *Task             `json:"task,omitempty" yaml:"task,omitempty"`
+		Selector *state.Parameters `json:"selector,omitempty" yaml:"selector,omitempty"`
 	}
 
 	Transition struct {

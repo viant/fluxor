@@ -71,7 +71,7 @@ func (m *Message[T]) Nack(err error) error {
 	// If under retry limit, requeue
 	if m.retryCount <= m.queue.config.MaxRetries {
 		go func() {
-			// Wait for retry delay
+			// WaitForProcess for retry delay
 			time.Sleep(m.queue.config.RetryDelay)
 
 			// Create a new message with incremented retry count

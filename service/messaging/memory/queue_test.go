@@ -86,7 +86,7 @@ func TestQueueRetries(t *testing.T) {
 	err = message.Nack(nil)
 	assert.NoError(t, err)
 
-	// Wait for retry delay
+	// WaitForProcess for retry delay
 	time.Sleep(20 * time.Millisecond)
 
 	// Second attempt
@@ -98,7 +98,7 @@ func TestQueueRetries(t *testing.T) {
 	err = message.Nack(nil)
 	assert.NoError(t, err)
 
-	// Wait for retry delay
+	// WaitForProcess for retry delay
 	time.Sleep(20 * time.Millisecond)
 
 	// Third attempt (final)
@@ -110,7 +110,7 @@ func TestQueueRetries(t *testing.T) {
 	err = message.Nack(nil)
 	assert.NoError(t, err)
 
-	// Wait for processing
+	// WaitForProcess for processing
 	time.Sleep(20 * time.Millisecond)
 
 	// No more retries, queue should be empty
@@ -189,7 +189,7 @@ func TestQueueConcurrency(t *testing.T) {
 		}(i)
 	}
 
-	// Wait for completion with timeout
+	// WaitForProcess for completion with timeout
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()

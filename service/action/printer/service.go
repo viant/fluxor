@@ -1,4 +1,4 @@
-package extractor
+package printer
 
 import (
 	"context"
@@ -32,7 +32,7 @@ func (s *Service) Name() string {
 }
 
 // Methods returns the service methods
-func (s *Service) Methods() []types.Signature {
+func (s *Service) Methods() types.Signatures {
 	return []types.Signature{
 		{
 			Name:   "print",
