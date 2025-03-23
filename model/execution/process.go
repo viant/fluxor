@@ -18,17 +18,18 @@ const (
 
 // Process represents a workflow execution instance
 type Process struct {
-	ID         string          `json:"id"`
-	SCN        int             `json:"scn"`
-	Name       string          `json:"name"`
-	State      string          `json:"state"`
-	Workflow   *model.Workflow `json:"workflow"`
-	CreatedAt  time.Time       `json:"createdAt"`
-	UpdatedAt  time.Time       `json:"updatedAt"`
-	FinishedAt *time.Time      `json:"finishedAt"`
-	Session    *Session        `json:"session"`
-	Stack      []*Execution    `json:"stack,omitempty"`
-	Mode       string          `json:"mode"` //debug
+	ID         string            `json:"id"`
+	SCN        int               `json:"scn"`
+	Name       string            `json:"name"`
+	State      string            `json:"state"`
+	Workflow   *model.Workflow   `json:"workflow"`
+	CreatedAt  time.Time         `json:"createdAt"`
+	UpdatedAt  time.Time         `json:"updatedAt"`
+	FinishedAt *time.Time        `json:"finishedAt"`
+	Session    *Session          `json:"session"`
+	Stack      []*Execution      `json:"stack,omitempty"`
+	Errors     map[string]string `json:"errors,omitempty"`
+	Mode       string            `json:"mode"` //debug
 	// For serverless environments
 	ActiveTaskCount  int                    `json:"activeTaskCount"`
 	ActiveTaskGroups map[string]bool        `json:"activeTaskGroups"`
@@ -40,6 +41,7 @@ type ProcessOutput struct {
 	ProcessID string
 	State     string
 	Output    map[string]interface{}
+	Errors    map[string]string
 	TimeTaken time.Duration
 	Timeout   bool
 }
@@ -74,6 +76,9 @@ func (p *Process) AllTasks() map[string]*graph.Task {
 // NewProcess creates a new process
 func NewProcess(id string, name string, workflow *model.Workflow, initialState map[string]interface{}) *Process {
 	now := time.Now()
+	if initialState == nil {
+		initialState = make(map[string]interface{})
+	}
 	return &Process{
 		ID:               id,
 		Name:             name,
@@ -84,6 +89,7 @@ func NewProcess(id string, name string, workflow *model.Workflow, initialState m
 		Session:          NewSession(id, WithState(initialState)),
 		ActiveTaskCount:  0,
 		ActiveTaskGroups: make(map[string]bool),
+		Errors:           make(map[string]string),
 	}
 }
 

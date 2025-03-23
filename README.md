@@ -83,75 +83,41 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"github.com/viant/afs"
-	_ "github.com/viant/afs/embed"
-	"github.com/viant/fluxor/extension"
-	"github.com/viant/fluxor/model/execution"
-	"github.com/viant/fluxor/service/action/system/executor"
-	"github.com/viant/fluxor/service/allocator"
-	ememory "github.com/viant/fluxor/service/dao/execution/memory"
-	pmemory "github.com/viant/fluxor/service/dao/process/memory"
-	"github.com/viant/fluxor/service/dao/workflow"
-	texecutor "github.com/viant/fluxor/service/executor"
-	mmemory "github.com/viant/fluxor/service/messaging/memory"
+	"github.com/viant/fluxor"
 	"time"
-	"github.com/viant/fluxor/service/meta"
-	"github.com/viant/fluxor/service/processor"
 )
 
 func main() {
-	runIt()
+	err := runIt()
+	if err != nil {
+		panic(err)
+	}
 }
 
 func runIt() error {
+	srv := fluxor.New()
+	runtime := srv.Runtime()
 	ctx := context.Background()
-
-	// Initialize components
-	actions := extension.NewActions()
-
-	// Register custom actions
-	// actions.Register(myCustomAction)
-	actions.Register(executor.New())
-
-
-	fs := afs.New()
-	metaService := meta.New(fs, "file:///workflowBaseDir")
-	workflowDao := workflow.New(workflow.WithRootTaskNodeName("stage"), workflow.WithMetaService(metaService))
-
-
-
-	queue := mmemory.NewQueue[execution.Execution](mmemory.DefaultConfig())
-	processorDao := pmemory.New()
-	taskExecutionDao := ememory.New()
-	
-	anExecutor := texecutor.NewService(actions)
-	anAllocator := allocator.New(processorDao, taskExecutionDao, queue, allocator.DefaultConfig())
-	aProcessor, err := processor.New(
-		processor.WithTaskExecutor(anExecutor),
-		processor.WithMessageQueue(queue),
-		processor.WithWorkers(1),
-		processor.WithTaskExecutionDAO(taskExecutionDao),
-		processor.WithProcessDAO(processorDao))
+	workflow, err := runtime.LoadWorkflow(ctx, "parent.yaml")
 	if err != nil {
-		return fmt.Errorf("failed to create processor: %w", err)
-	}
-
-	if err = aProcessor.Start(ctx);err != nil {
-        return err
-    }
-	var initialState = make(map[string]interface{})
-	initialState["attr1"] = 1
-	aWorkflow, err := workflowDao.Load(ctx, "intent/coding.yaml")
-	_, err = aProcessor.StartProcess(ctx, aWorkflow, nil, initialState)
-    if err != nil {
 		return err
-    }
-	return anAllocator.Start(ctx)
+	}
+	_ = runtime.Start(ctx)
+	process, wait, err := runtime.StartProcess(ctx, workflow, map[string]interface{}{})
+	if err != nil {
+		return err
+	}
+	fmt.Println("process:", process.ID)
+	output, err := wait(ctx, time.Minute)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("output: %+v\n", output)
+	return nil
 }
-
 ```
+
 
 ## Defining Workflows
 
@@ -159,29 +125,40 @@ Fluxor workflows are defined in YAML or JSON. Here's a simple example:
 
 ```yaml
 init:
-  counter: 0
+  i: 0
 
 pipeline:
-  task1:
-    action: system/executor
-    commands:
-      - echo "Starting workflow"
-    
-  task2:
-    dependsOn: task1
+  start:
     action: printer:print
     input:
-      message: "Processing step ${counter}"
-    
-  task3:
-    dependsOn: task2
-    action: system/executor
-    commands:
-      - echo "Finishing workflow"
-    transitions:
-      - when: "${counter < 5}"
-        goto: task2
+      message: 'Parent started'
+  loop:
+    inc:
+      action: nop:nop
+      post:
+        i: ${i + 1}
+
+    runChildren:
+      action: workflow:run
+      input:
+        location: children
+        context:
+          iteration: $i
+    body:
+      action: printer:print
+      input:
+        message: 'Iteration: $i'
+      goto:
+        when: i < 3
+        task: loop
+
+  stop:
+    action: printer:print
+    input:
+      message: 'Parent stoped'
+
 ```
+
 
 ## Custom Actions
 

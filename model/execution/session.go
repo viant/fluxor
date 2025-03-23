@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model"
+	"github.com/viant/fluxor/model/expander"
 	"github.com/viant/fluxor/model/state"
 	"github.com/viant/structology/conv"
 	"reflect"
@@ -85,7 +86,7 @@ func (s *Session) GetBool(key string) (bool, bool) {
 
 // Expand expands a value using the session state
 func (s *Session) Expand(value interface{}) (interface{}, error) {
-	return Expand(value, s.State)
+	return expander.Expand(value, s.State)
 }
 
 // ApplyParameters applies a list of parameters to the session
@@ -95,7 +96,7 @@ func (s *Session) ApplyParameters(params state.Parameters) error {
 	var err error
 	for _, param := range params {
 		value := param.Value
-		if value, err = Expand(param.Value, s.State); err != nil {
+		if value, err = expander.Expand(param.Value, s.State); err != nil {
 			return err
 		}
 		value, err = s.ensureValueType(param.DataType, value)

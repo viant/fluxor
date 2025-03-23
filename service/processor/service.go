@@ -122,14 +122,19 @@ func (w *worker) run() {
 			}
 
 			if message != nil {
-				w.service.processMessage(w.ctx, message)
+				go func() {
+					err = w.service.processMessage(w.ctx, message)
+					if err != nil {
+						fmt.Printf("failed to process message: %v\n", err)
+					}
+				}()
 			}
 		}
 	}
 }
 
 // StartProcess begins execution of a workflow
-func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, customTasks []string, init map[string]interface{}) (*execution.Process, error) {
+func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, init map[string]interface{}, customTasks ...string) (*execution.Process, error) {
 	if workflow == nil {
 		return nil, fmt.Errorf("workflow cannot be nil")
 	}

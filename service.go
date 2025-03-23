@@ -6,6 +6,7 @@ import (
 	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/types"
+	"github.com/viant/fluxor/service/action/nop"
 	"github.com/viant/fluxor/service/action/printer"
 	aexecutor "github.com/viant/fluxor/service/action/system/executor"
 	aworkflow "github.com/viant/fluxor/service/action/workflow"
@@ -43,7 +44,7 @@ func (s *Service) init(options []Option) {
 	s.ensureBaseSetup()
 	s.actions = extension.NewActions(s.extensionTypes...)
 	s.executor = texecutor.NewService(s.actions)
-	aProcessor, _ := processor.New(
+	s.runtime.processor, _ = processor.New(
 		processor.WithTaskExecutor(s.executor),
 		processor.WithMessageQueue(s.queue),
 		processor.WithWorkers(1),
@@ -51,7 +52,9 @@ func (s *Service) init(options []Option) {
 		processor.WithProcessDAO(s.runtime.processorDAO))
 	s.actions.Register(printer.New())
 	s.actions.Register(aexecutor.New())
-	s.runtime.workflowService = aworkflow.New(aProcessor, s.runtime.workflowDAO, s.runtime.processorDAO)
+	s.actions.Register(nop.New())
+
+	s.runtime.workflowService = aworkflow.New(s.runtime.processor, s.runtime.workflowDAO, s.runtime.processorDAO)
 	s.actions.Register(s.runtime.workflowService)
 	s.runtime.allocator = allocator.New(s.runtime.processorDAO, s.runtime.taskExecutionDao, s.queue, allocator.DefaultConfig())
 

@@ -9,6 +9,7 @@ import (
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/dao/workflow"
 	"github.com/viant/fluxor/service/processor"
+	"time"
 )
 
 // Runtime represents a workflow engine runtime
@@ -27,13 +28,13 @@ func (r *Runtime) LoadWorkflow(ctx context.Context, location string) (*model.Wor
 }
 
 // StartProcess starts a new process
-func (r *Runtime) StartProcess(ctx context.Context, aWorkflow *model.Workflow, initialState map[string]interface{}, tasks ...string) (*execution.Process, func(ctx context.Context, timeoutMs int) (*execution.ProcessOutput, error), error) {
-	process, err := r.processor.StartProcess(ctx, aWorkflow, tasks, initialState)
+func (r *Runtime) StartProcess(ctx context.Context, aWorkflow *model.Workflow, initialState map[string]interface{}, tasks ...string) (*execution.Process, func(ctx context.Context, timeout time.Duration) (*execution.ProcessOutput, error), error) {
+	process, err := r.processor.StartProcess(ctx, aWorkflow, initialState, tasks...)
 	if err != nil {
 		return nil, nil, err
 	}
-	wait := func(ctx context.Context, timeoutMs int) (*execution.ProcessOutput, error) {
-		output, err := r.workflowService.WaitForProcess(ctx, process.ID, timeoutMs)
+	wait := func(ctx context.Context, timeout time.Duration) (*execution.ProcessOutput, error) {
+		output, err := r.workflowService.WaitForProcess(ctx, process.ID, int(timeout.Milliseconds()))
 		if err != nil {
 			return nil, err
 		}

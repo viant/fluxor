@@ -40,7 +40,7 @@ func (s *Service) status(ctx context.Context, in, out interface{}) error {
 
 	output, ok := in.(*StatusOutput)
 	if !ok {
-		return types.NewInvalidInputError(in)
+		return types.NewInvalidOutputError(out)
 	}
 	output.State = process.State
 	output.Output = process.Session.State

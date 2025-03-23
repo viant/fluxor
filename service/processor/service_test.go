@@ -41,14 +41,14 @@ func TestService_StartProcess(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name       string
-		customPath []string
-		expectErr  bool
+		name        string
+		customTasks []string
+		expectErr   bool
 	}{
 		{
-			name:       "Default execution order",
-			customPath: nil,
-			expectErr:  false,
+			name:        "Default execution order",
+			customTasks: nil,
+			expectErr:   false,
 		},
 	}
 
@@ -61,7 +61,7 @@ func TestService_StartProcess(t *testing.T) {
 			assert.Nil(t, err)
 			// Start the process
 			ctx := context.Background()
-			process, err := executor.StartProcess(ctx, workflow, tc.customPath)
+			process, err := executor.StartProcess(ctx, workflow, map[string]interface{}{}, tc.customTasks...)
 
 			if tc.expectErr {
 				assert.Error(t, err)

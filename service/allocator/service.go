@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/viant/fluxor/model/execution"
+	"github.com/viant/fluxor/model/expander"
+	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/messaging"
 	"time"
@@ -19,7 +21,7 @@ type Config struct {
 // DefaultConfig returns the default allocator configuration
 func DefaultConfig() Config {
 	return Config{
-		PollingInterval: 100 * time.Millisecond,
+		PollingInterval: 20 * time.Millisecond,
 	}
 }
 
@@ -63,17 +65,17 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 }
 
-// handleGoTo processDAO a goto transition by creating a new execution path
-func (s *Service) handleGoTo(ctx context.Context, processID string, fromTaskID string, toTaskID string) error {
+// handleTransition processDAO a goto transition by creating a new execution path
+func (s *Service) handleTransition(ctx context.Context, processID string, fromTaskID string, toTaskID string) error {
 	aProcess, err := s.processDAO.Load(ctx, processID)
 	if err != nil {
 		return err
 	}
 	allTasks := aProcess.Workflow.AllTasks()
 	parentTask := allTasks[fromTaskID]
-	nextTask := allTasks[fromTaskID]
+	nextTask := allTasks[toTaskID]
 	nextExecution := execution.NewExecution(processID, parentTask, nextTask)
-	aProcess.Stack = []*execution.Execution{nextExecution}
+	aProcess.Push(nextExecution)
 	// Save the process with the updated plan
 	return s.processDAO.Save(ctx, aProcess)
 	// Let the allocator schedule the next task
@@ -113,7 +115,11 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 	if len(process.Stack) == 0 {
 		// No more tasks to execute, check if process is complete
 		if process.GetState() == execution.StateRunning {
-			process.SetState(execution.StateCompleted)
+			if len(process.Errors) > 0 {
+				process.SetState(execution.StateFailed)
+			} else {
+				process.SetState(execution.StateCompleted)
+			}
 			return s.processDAO.Save(ctx, process)
 		}
 		return nil
@@ -145,7 +151,7 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 
 	switch dependencyState {
 	case execution.TaskStateFailed:
-		return s.handleDoneWithState(ctx, process, anExecution, dependencyState)
+		return s.handleProcessedExecution(ctx, process, anExecution, dependencyState)
 	}
 
 	switch anExecution.State {
@@ -166,14 +172,13 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 	case execution.TaskStateRunning:
 		return nil
 	default:
-		return s.handleDoneWithState(ctx, process, anExecution, status)
+		return s.handleProcessedExecution(ctx, process, anExecution, status)
 
 	}
 	return nil
 }
 
 func (s *Service) handleRunningTask(ctx context.Context, process *execution.Process, anExecution *execution.Execution) (bool, error) {
-	currentTask := process.LookupTask(anExecution.TaskID)
 	runningExecution, err := s.taskExecutionDao.Load(ctx, anExecution.ID)
 	if err != nil {
 		return false, fmt.Errorf("failed to load running execution: %w", err)
@@ -186,11 +191,8 @@ func (s *Service) handleRunningTask(ctx context.Context, process *execution.Proc
 	case execution.TaskStateRunning, execution.TaskStatePaused:
 		return false, nil
 	case execution.TaskStateCompleted:
-		if len(currentTask.Tasks) == 0 || anExecution.GoToTask != "" { //no subtask
-			return false, s.handleDoneWithState(ctx, process, anExecution, runningExecution.State)
-		}
 	case execution.TaskStateFailed, execution.TaskStateSkipped:
-		return false, s.handleDoneWithState(ctx, process, anExecution, runningExecution.State)
+		return false, s.handleProcessedExecution(ctx, process, anExecution, runningExecution.State)
 	}
 	return true, nil
 }
@@ -341,17 +343,26 @@ func (s *Service) Shutdown() {
 	close(s.shutdownCh)
 }
 
-func (s *Service) handleDoneWithState(ctx context.Context, process *execution.Process, anExecution *execution.Execution, state execution.TaskState) error {
+func (s *Service) handleProcessedExecution(ctx context.Context, process *execution.Process, anExecution *execution.Execution, state execution.TaskState) error {
+	currentTask := process.LookupTask(anExecution.TaskID)
+
 	if state == execution.TaskStateCompleted {
-		currentTask := process.LookupTask(anExecution.TaskID)
 		output := anExecution.Output
+		var outputMap = make(map[string]string)
 		if data, err := json.Marshal(anExecution.Output); err == nil {
-			outputMap := make(map[string]interface{})
 			if err = json.Unmarshal(data, &outputMap); err == nil {
 				output = outputMap
 			}
 		}
+
 		process.Session.Set(currentTask.Namespace, output)
+		err := s.handleTaskDone(currentTask, process, anExecution, outputMap)
+		if err != nil {
+			return err
+		}
+	}
+	if anExecution.Error != "" {
+		process.Errors[currentTask.Namespace] = anExecution.Error
 	}
 	parent := process.LookupExecution(anExecution.ParentTaskID)
 	if parent != nil {
@@ -363,7 +374,38 @@ func (s *Service) handleDoneWithState(ctx context.Context, process *execution.Pr
 		return fmt.Errorf("failed to save process: %w", err)
 	}
 	if anExecution.GoToTask != "" {
-		return s.handleGoTo(ctx, process.ID, anExecution.TaskID, anExecution.GoToTask)
+		return s.handleTransition(ctx, process.ID, anExecution.TaskID, anExecution.GoToTask)
 	}
 	return nil
+}
+
+func (s *Service) handleTaskDone(currentTask *graph.Task, process *execution.Process, anExecution *execution.Execution, outputMap map[string]string) error {
+
+	source := process.Session.Clone()
+	for k, v := range outputMap {
+		source.Set(k, v)
+	}
+
+	for _, parameter := range currentTask.Post {
+		evaluated, err := expander.Expand(parameter.Value, source.State)
+		if err == nil {
+			process.Session.Set(parameter.Name, evaluated)
+		}
+	}
+	if len(currentTask.Goto) > 0 {
+		// Evaluate transitions in order
+		for _, transition := range currentTask.Goto {
+			// Evaluate condition based on process session state
+			conditionMet, err := evaluateCondition(transition.When, process, currentTask, anExecution, false)
+			if err != nil {
+				return err
+			}
+			if conditionMet && transition.Task != "" {
+				anExecution.GoToTask = transition.Task
+				break
+			}
+		}
+	}
+	return nil
+
 }

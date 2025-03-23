@@ -1,17 +1,33 @@
 init:
   i: 0
+
 pipeline:
-  loop:
+  start:
     action: printer:print
     input:
-      message: 'Iteration: $i'
-    post:
-      i: ${i + 1}
+      message: 'Parent started'
+  loop:
+    inc:
+      action: nop:nop
+      post:
+        i: ${i + 1}
 
 
-  repeat:
-    transition:
-      - when: $i < 3
-        next: loop
+    runChild:
+      action: workflow:run
+      input:
+        location: children
+        context:
+          iteration: $i
+    body:
+      action: printer:print
+      input:
+        message: 'Iteration: $i'
+      goto:
+        when: i < 3
+        task: loop
 
-
+  stop:
+    action: printer:print
+    input:
+      message: 'Parent stoped'

@@ -83,10 +83,10 @@ func (e *Execution) Pause() {
 func (e *Execution) Fail(err error) {
 	now := time.Now()
 	e.CompletedAt = &now
-	e.State = TaskStateFailed
 	if err != nil {
 		e.Error = err.Error()
 	}
+	e.State = TaskStateFailed
 }
 
 func (e *Execution) Schedule() {

@@ -1,0 +1,22 @@
+init:
+  x: $iteration
+
+pipeline:
+  start:
+    action: printer:print
+    input:
+      message: 'Child started $x'
+  exec:
+    action: system/executor:execute
+    input:
+      commands:
+        - echo 'running $x'
+  info:
+    action: printer:print
+    input:
+      message: 'Child bash: ${exec.Stdout}'
+
+  stop:
+    action: printer:print
+    input:
+      message: 'Child stopped $x'

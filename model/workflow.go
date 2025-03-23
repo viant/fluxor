@@ -221,13 +221,13 @@ func cloneTask(task *graph.Task) *graph.Task {
 		}
 	}
 
-	// Clone Transitions
-	if task.Transitions != nil {
-		clone.Transitions = make([]*graph.Transition, len(task.Transitions))
-		for i, transition := range task.Transitions {
-			clone.Transitions[i] = &graph.Transition{
+	// Clone Goto
+	if task.Goto != nil {
+		clone.Goto = make([]*graph.Transition, len(task.Goto))
+		for i, transition := range task.Goto {
+			clone.Goto[i] = &graph.Transition{
 				When: transition.When,
-				Goto: transition.Goto,
+				Task: transition.Task,
 			}
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model/execution"
+	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/structology/conv"
 )
 
@@ -27,6 +28,14 @@ func (s *service) Execute(ctx context.Context, anExecution *execution.Execution,
 		return fmt.Errorf("task %s not found in workflow", anExecution.TaskID)
 	}
 	// Execute task action if defined
+	err := s.execute(ctx, anExecution, process, task)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *service) execute(ctx context.Context, anExecution *execution.Execution, process *execution.Process, task *graph.Task) error {
 	if action := task.Action; action != nil {
 		taskService := s.actions.Lookup(task.Action.Service)
 		if taskService == nil {
@@ -68,18 +77,8 @@ func (s *service) Execute(ctx context.Context, anExecution *execution.Execution,
 		}
 		err = method(ctx, input, output)
 		anExecution.Output = output
-	}
-
-	// Check for transitions to determine the next task to execute
-	if len(task.Transitions) > 0 {
-		// Evaluate transitions in order
-		for _, transition := range task.Transitions {
-			// Evaluate condition based on process session state
-			conditionMet := evaluateCondition(transition.When, process)
-			if conditionMet && transition.Goto != "" {
-				anExecution.GoToTask = transition.Goto
-				break
-			}
+		if err != nil {
+			return err
 		}
 	}
 	return nil

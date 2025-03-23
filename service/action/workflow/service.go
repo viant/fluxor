@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"fmt"
 	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/types"
 	"github.com/viant/fluxor/service/dao"
@@ -24,6 +25,7 @@ func New(processor *processor.Service, workflowDao *workflow.Service, processDao
 	return &Service{
 		processor:   processor,
 		workflowDao: workflowDao,
+		processDao:  processDao,
 	}
 }
 
@@ -38,12 +40,12 @@ func (s *Service) Methods() types.Signatures {
 		{
 			Name:   "status",
 			Input:  reflect.TypeOf(&StatusInput{}),
-			Output: reflect.TypeOf(&StartOutput{}),
+			Output: reflect.TypeOf(&RunOutput{}),
 		},
 		{
-			Name:   "status",
-			Input:  reflect.TypeOf(&StartInput{}),
-			Output: reflect.TypeOf(&StartOutput{}),
+			Name:   "run",
+			Input:  reflect.TypeOf(&RunInput{}),
+			Output: reflect.TypeOf(&RunOutput{}),
 		},
 		{
 			Name:   "wait",
@@ -56,8 +58,8 @@ func (s *Service) Methods() types.Signatures {
 // Method returns the specified method
 func (s *Service) Method(name string) (types.Executable, error) {
 	switch name {
-	case "start":
-		return s.start, nil
+	case "run":
+		return s.run, nil
 	case "status":
 		return s.status, nil
 	case "wait":
@@ -68,13 +70,16 @@ func (s *Service) Method(name string) (types.Executable, error) {
 	}
 }
 
-func (s *Service) ensureWorkflow(ctx context.Context, input *StartInput) error {
+func (s *Service) ensureWorkflow(ctx context.Context, input *RunInput) error {
 	if input.Workflow != nil {
 		return nil
 	}
 	workflow, err := s.workflowDao.Load(ctx, input.Location)
 	if err != nil {
 		return err
+	}
+	if workflow.Pipeline == nil {
+		return fmt.Errorf("workflow %v has no %v", input.Location, s.workflowDao.RootTaskNodeName())
 	}
 	input.Workflow = workflow
 	return nil

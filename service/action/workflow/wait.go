@@ -53,9 +53,9 @@ func (s *Service) wait(ctx context.Context, in, out interface{}) error {
 		return err
 	}
 
-	output, ok := in.(*WaitOutput)
+	output, ok := out.(*WaitOutput)
 	if !ok {
-		return types.NewInvalidInputError(in)
+		return types.NewInvalidOutputError(out)
 	}
 
 	poolFrequency := time.Millisecond * time.Duration(input.PoolFrequencyInMs)
@@ -72,7 +72,7 @@ outer:
 		case execution.StateCompleted, execution.StateFailed:
 			break outer
 		}
-		if expiry.After(started) {
+		if expiry.Before(started) {
 			output.Timeout = true
 			break outer
 		}
@@ -85,6 +85,7 @@ outer:
 	}
 	output.State = process.State
 	output.Output = process.Session.State
+	output.Errors = process.Errors
 	finishedAt := process.FinishedAt
 	if finishedAt == nil {
 		ts := time.Now()

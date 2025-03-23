@@ -21,8 +21,17 @@ type Service struct {
 	rootTaskNodeName string
 }
 
+// RootTaskNodeName returns the root task node name
+func (s *Service) RootTaskNodeName() string {
+	return s.rootTaskNodeName
+}
+
 // Load loads a workflow from YAML at the specified URL
 func (s *Service) Load(ctx context.Context, URL string) (*model.Workflow, error) {
+	ext := filepath.Ext(URL)
+	if ext == "" {
+		URL += ".yaml"
+	}
 	var node yaml.Node
 	if err := s.metaService.Load(ctx, URL, &node); err != nil {
 		return nil, fmt.Errorf("failed to load workflow from %s: %w", URL, err)
@@ -91,7 +100,7 @@ func (s *Service) parseWorkflow(node *yml.Node, workflow *model.Workflow) error 
 	}
 	rootNodeName := strings.ToLower(s.rootTaskNodeName)
 	// Parse workflow properties
-	_ = rootNode.Pairs(func(key string, valueNode *yml.Node) error {
+	err := rootNode.Pairs(func(key string, valueNode *yml.Node) error {
 		lowerKey := strings.ToLower(key)
 		switch lowerKey {
 		case "name":
@@ -156,7 +165,7 @@ func (s *Service) parseWorkflow(node *yml.Node, workflow *model.Workflow) error 
 
 		return nil
 	})
-	return nil
+	return err
 }
 
 // parseRootTask converts YAML node to graph.Task
@@ -285,15 +294,21 @@ func (s *Service) parseTask(id string, node *yml.Node) (*graph.Task, error) {
 				}
 				task.DependsOn = []string{text}
 			}
-		case "transitions":
+		case "goto":
 			if valueNode.Kind == yaml.SequenceNode {
 				for _, transNode := range valueNode.Content {
 					trans, err := parseTransition((*yml.Node)(transNode))
 					if err != nil {
 						return err
 					}
-					task.Transitions = append(task.Transitions, trans)
+					task.Goto = append(task.Goto, trans)
 				}
+			} else if valueNode.Kind == yaml.MappingNode {
+				trans, err := parseTransition(valueNode)
+				if err != nil {
+					return err
+				}
+				task.Goto = append(task.Goto, trans)
 			}
 		case "input":
 			if valueNode.Kind != yaml.MappingNode {
@@ -341,9 +356,9 @@ func parseTransition(node *yml.Node) (*graph.Transition, error) {
 			if valueNode.Kind == yaml.ScalarNode {
 				transition.When = valueNode.Value
 			}
-		case "then", "goto":
+		case "task":
 			if valueNode.Kind == yaml.ScalarNode {
-				transition.Goto = valueNode.Value
+				transition.Task = valueNode.Value
 			}
 		}
 		return nil
