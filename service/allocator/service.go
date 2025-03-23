@@ -131,6 +131,16 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 	currentTask := process.LookupTask(anExecution.TaskID)
 	switch anExecution.State {
 	case execution.TaskStatePending:
+		if currentTask.When != "" {
+			canRun, err := evaluateCondition(currentTask.When, process, currentTask, anExecution, true)
+			if err != nil {
+				return err
+			}
+			if !canRun {
+				anExecution.Skip()
+				return s.handleProcessedExecution(ctx, process, anExecution, anExecution.State)
+			}
+		}
 		anExecution.Data = make(map[string]interface{})
 		for _, parameter := range currentTask.Init {
 			if anExecution.Data[parameter.Name], err = process.Session.Expand(parameter.Value); err != nil {
@@ -173,9 +183,7 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 		return nil
 	default:
 		return s.handleProcessedExecution(ctx, process, anExecution, status)
-
 	}
-	return nil
 }
 
 func (s *Service) handleRunningTask(ctx context.Context, process *execution.Process, anExecution *execution.Execution) (bool, error) {

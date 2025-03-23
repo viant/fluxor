@@ -14,6 +14,10 @@ func evaluateCondition(condition string, process *execution.Process, task *graph
 	if condition == "" {
 		return defaultValue, nil
 	}
+
+	condition = strings.TrimPrefix(condition, "${")
+	condition = strings.TrimSuffix(condition, "}")
+
 	session := process.Session.Clone()
 	session.Set(task.Namespace, anExecution.Output)
 

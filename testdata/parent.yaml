@@ -1,11 +1,16 @@
 init:
   i: 0
-
+  j: 0
 pipeline:
   start:
     action: printer:print
     input:
       message: 'Parent started'
+  optional:
+    when: ${j > 3}
+    action: nop:nop
+    post:
+      i: ${i + 1}
   loop:
     inc:
       action: nop:nop

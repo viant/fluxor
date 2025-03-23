@@ -135,6 +135,10 @@ func (e *Execution) Merge(execution *Execution) {
 	}
 }
 
+func (e *Execution) Skip() {
+	e.State = TaskStateSkipped
+}
+
 // generateExecutionID creates a unique ID for an execution
 func generateExecutionID(processID, taskID string) string {
 	return fmt.Sprintf("%s-%s-%d", processID, taskID, time.Now().UnixNano())
