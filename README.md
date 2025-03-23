@@ -261,19 +261,6 @@ taskB:
     message: "Task B depends on Task A"
 ```
 
-### Conditional Execution
-
-```yaml
-taskA:
-  action: printer:print
-  input:
-    message: "Checking condition"
-  transitions:
-    - when: "${result > 100}"
-      goto: highValueTask
-    - when: "${result <= 100}"
-      goto: lowValueTask
-```
 
 ### Parallel Execution
 
@@ -293,18 +280,6 @@ parallelTasks:
         message: "Running in parallel 2"
 ```
 
-### Process Management
-
-```go
-// Pause a running process
-err := procSvc.PauseProcess(ctx, processID)
-
-// Resume a paused process
-err := procSvc.ResumeProcess(ctx, processID)
-
-// Get process status
-process, err := procSvc.GetProcess(ctx, processID)
-```
 
 ## Contributing
 
