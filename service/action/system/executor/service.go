@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/viant/afs/url"
-	"github.com/viant/fluxor/service/action/connector"
+	"github.com/viant/fluxor/service/action/system"
 	"github.com/viant/gosh"
 	"github.com/viant/gosh/runner"
 	"github.com/viant/gosh/runner/local"
@@ -113,7 +113,7 @@ func (s *Service) executeCommand(ctx context.Context, session *sessionInfo, comm
 }
 
 // getSession retrieves an existing session or creates a new one
-func (s *Service) getSession(ctx context.Context, host *connector.Host, env map[string]string) (*sessionInfo, error) {
+func (s *Service) getSession(ctx context.Context, host *system.Host, env map[string]string) (*sessionInfo, error) {
 	sessionID := host.URL
 
 	s.mux.Lock()
@@ -162,7 +162,7 @@ func (s *Service) getSession(ctx context.Context, host *connector.Host, env map[
 }
 
 // getSSHConfig creates an SSH config from the host's secrets
-func (s *Service) getSSHConfig(ctx context.Context, host *connector.Host) (*ssh.ClientConfig, error) {
+func (s *Service) getSSHConfig(ctx context.Context, host *system.Host) (*ssh.ClientConfig, error) {
 	credentials := host.Credentials
 	if credentials == "" {
 		credentials = "localhost"

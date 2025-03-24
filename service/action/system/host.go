@@ -1,4 +1,4 @@
-package connector
+package system
 
 type Host struct {
 	URL         string `yaml:"URL" json:"url"`

@@ -9,6 +9,8 @@ import (
 	"github.com/viant/fluxor/service/action/nop"
 	"github.com/viant/fluxor/service/action/printer"
 	aexecutor "github.com/viant/fluxor/service/action/system/executor"
+	asecret "github.com/viant/fluxor/service/action/system/secret"
+	astorage "github.com/viant/fluxor/service/action/system/storage"
 	aworkflow "github.com/viant/fluxor/service/action/workflow"
 	"github.com/viant/fluxor/service/allocator"
 	ememory "github.com/viant/fluxor/service/dao/execution/memory"
@@ -52,6 +54,8 @@ func (s *Service) init(options []Option) {
 		processor.WithProcessDAO(s.runtime.processorDAO))
 	s.actions.Register(printer.New())
 	s.actions.Register(aexecutor.New())
+	s.actions.Register(astorage.New())
+	s.actions.Register(asecret.New())
 	s.actions.Register(nop.New())
 
 	s.runtime.workflowService = aworkflow.New(s.runtime.processor, s.runtime.workflowDAO, s.runtime.processorDAO)
