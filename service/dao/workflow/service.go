@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/viant/fluxor/internal/yml"
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/model/state"
 	"github.com/viant/fluxor/service/meta"
+	"github.com/viant/fluxor/service/meta/yml"
 	"gopkg.in/yaml.v3"
 )
 
