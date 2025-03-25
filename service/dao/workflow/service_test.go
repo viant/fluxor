@@ -40,50 +40,62 @@ func TestService_Load(t *testing.T) {
   "source": {
     "url": "flow.yaml"
   },
+  "name": "flow",
+  "Imports": null,
   "init": [
     {
-      "name": "i",
-      "value": 0
+      "name": "x",
+      "value": 0.0
     }
   ],
   "pipeline": {
+    "id": "flow",
     "tasks": [
       {
-        "id": "task1",
-        "init": [
-          {
-            "name": "i",
-            "value": "${ i+1 }"
-          }
-        ],
+        "id": "flow/task1",
+        "name": "task1",
+        "namespace": "task1",
         "action": {
-          "service": "nop"
+          "service": "system/executor"
         }
       },
       {
-        "id": "task2",
+        "id": "flow/task2",
+        "name": "task2",
+        "namespace": "task2",
         "tasks": [
           {
-            "id": "subTask",
+            "id": "flow/task2/subTask",
+            "name": "subTask",
+            "namespace": "subTask",
             "action": {
-              "service": "printer:print",
+              "service": "printer",
+              "method": "print",
               "input": {
-                "message": "${{ task.i }}"
+                "message": "$task1.Output"
               }
-            }
-          },
-          {
-            "id": "task3",
-            "transitions": [
-              {
-                "when": "${i \u003c 5}",
-                "goto": "task1"
-              }
+            },
+            "dependsOn": [
+              "taskZ"
             ]
           }
         ]
       }
     ]
+  },
+  "dependencies": {
+    "taskZ": {
+      "id": "taskZ",
+      "name": "taskZ",
+      "namespace": "taskZ",
+      "action": {
+        "service": "printer",
+        "method": "print",
+        "input": {
+          "message": "taskZ"
+        }
+      }
+    }
   }
 }`,
 		},

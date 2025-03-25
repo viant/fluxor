@@ -73,6 +73,11 @@ func expand(value string, from map[string]interface{}) interface{} {
 		if replacement == nil {
 			return match // Keep original if not found
 		}
+		rType := reflect.TypeOf(replacement)
+		switch rType.Kind() {
+		case reflect.Slice, reflect.Map:
+			return match // Keep original if the replacement is a complex type
+		}
 		return stringifyValue(replacement)
 	})
 

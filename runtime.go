@@ -28,7 +28,7 @@ func (r *Runtime) LoadWorkflow(ctx context.Context, location string) (*model.Wor
 }
 
 // StartProcess starts a new process
-func (r *Runtime) StartProcess(ctx context.Context, aWorkflow *model.Workflow, initialState map[string]interface{}, tasks ...string) (*execution.Process, func(ctx context.Context, timeout time.Duration) (*execution.ProcessOutput, error), error) {
+func (r *Runtime) StartProcess(ctx context.Context, aWorkflow *model.Workflow, initialState map[string]interface{}, tasks ...string) (*execution.Process, execution.Wait, error) {
 	process, err := r.processor.StartProcess(ctx, aWorkflow, initialState, tasks...)
 	if err != nil {
 		return nil, nil, err

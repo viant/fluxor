@@ -6,6 +6,7 @@ import (
 	"github.com/viant/fluxor/model/types"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/messaging"
+	"github.com/viant/fluxor/service/meta"
 	"github.com/viant/x"
 )
 
@@ -16,6 +17,12 @@ type Option func(s *Service)
 func WithExtensionTypes(types ...*x.Type) Option {
 	return func(s *Service) {
 		s.extensionTypes = types
+	}
+}
+
+func WithMetaService(service *meta.Service) Option {
+	return func(s *Service) {
+		s.metaService = service
 	}
 }
 

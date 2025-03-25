@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"context"
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/graph"
 	"sync"
@@ -36,6 +37,8 @@ type Process struct {
 	mu               sync.RWMutex           // Protects concurrent access
 	allTasks         map[string]*graph.Task // Cached all tasks
 }
+
+type Wait func(ctx context.Context, timeout time.Duration) (*ProcessOutput, error)
 
 type ProcessOutput struct {
 	ProcessID string

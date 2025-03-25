@@ -39,6 +39,10 @@ type (
 	}
 )
 
+func (t *Task) IsAsync() bool {
+	return t.Async
+}
+
 func (t *Task) IsAutoPause() bool {
 	if t.AutoPause == nil {
 		return false

@@ -67,8 +67,8 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 		if err != nil {
 			return err
 		}
-		taskInput, err := session.Expand(task.Action.Input)
-		if err != nil {
+		var taskInput = task.Action.Input
+		if taskInput, err = session.Expand(task.Action.Input); err != nil {
 			return err
 		}
 		input, err := session.TypedValue(signature.Input, taskInput)

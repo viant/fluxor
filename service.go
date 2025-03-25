@@ -28,6 +28,7 @@ import (
 
 type Service struct {
 	runtime           *Runtime
+	metaService       *meta.Service
 	actions           *extension.Actions
 	extensionTypes    []*x.Type
 	extensionServices []types.Service
@@ -57,7 +58,9 @@ func (s *Service) init(options []Option) {
 	s.actions.Register(astorage.New())
 	s.actions.Register(asecret.New())
 	s.actions.Register(nop.New())
-
+	for _, service := range s.extensionServices {
+		s.actions.Register(service)
+	}
 	s.runtime.workflowService = aworkflow.New(s.runtime.processor, s.runtime.workflowDAO, s.runtime.processorDAO)
 	s.actions.Register(s.runtime.workflowService)
 	s.runtime.allocator = allocator.New(s.runtime.processorDAO, s.runtime.taskExecutionDao, s.queue, allocator.DefaultConfig())
@@ -81,12 +84,16 @@ func (s *Service) Runtime() *Runtime {
 }
 
 func (s *Service) ensureBaseSetup() {
+
+	if s.metaService == nil {
+		s.metaService = meta.New(afs.New(), s.metaBaseURL, s.metaFsOptions...)
+	}
+
 	if s.runtime.workflowDAO == nil {
 		if s.rootTaskNodeName == "" {
 			s.rootTaskNodeName = "pipeline"
 		}
-		metaService := meta.New(afs.New(), s.metaBaseURL, s.metaFsOptions...)
-		s.runtime.workflowDAO = workflow.New(workflow.WithRootTaskNodeName(s.rootTaskNodeName), workflow.WithMetaService(metaService))
+		s.runtime.workflowDAO = workflow.New(workflow.WithRootTaskNodeName(s.rootTaskNodeName), workflow.WithMetaService(s.metaService))
 	}
 	if s.queue == nil {
 		s.queue = mmemory.NewQueue[execution.Execution](mmemory.DefaultConfig())
