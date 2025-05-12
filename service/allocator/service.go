@@ -8,7 +8,9 @@ import (
 	"github.com/viant/fluxor/model/expander"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/service/dao"
+	"github.com/viant/fluxor/service/event"
 	"github.com/viant/fluxor/service/messaging"
+	"log"
 	"time"
 )
 
@@ -131,21 +133,13 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 	currentTask := process.LookupTask(anExecution.TaskID)
 	switch anExecution.State {
 	case execution.TaskStatePending:
-		if currentTask.When != "" {
-			canRun, err := evaluateCondition(currentTask.When, process, currentTask, anExecution, true)
-			if err != nil {
-				return err
-			}
-			if !canRun {
-				anExecution.Skip()
-				return s.handleProcessedExecution(ctx, process, anExecution, anExecution.State)
-			}
+		done, err := s.handlePendingTask(ctx, process, currentTask, anExecution)
+		if err != nil {
+			return s.handleExecutionError(ctx, process, anExecution, err)
 		}
-		anExecution.Data = make(map[string]interface{})
-		for _, parameter := range currentTask.Init {
-			if anExecution.Data[parameter.Name], err = process.Session.Expand(parameter.Value); err != nil {
-				return err
-			}
+
+		if done {
+			return nil
 		}
 	case execution.TaskStateRunning, execution.TaskStateScheduled, execution.TaskStatePaused:
 		scheduleSubTasks, err := s.handleRunningTask(ctx, process, anExecution)
@@ -184,6 +178,27 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 	default:
 		return s.handleProcessedExecution(ctx, process, anExecution, status)
 	}
+}
+
+func (s *Service) handlePendingTask(ctx context.Context, process *execution.Process, currentTask *graph.Task, anExecution *execution.Execution) (bool, error) {
+	var err error
+	if currentTask.When != "" {
+		canRun, err := evaluateCondition(currentTask.When, process, currentTask, anExecution, true)
+		if err != nil {
+			return true, err
+		}
+		if !canRun {
+			anExecution.Skip()
+			return true, s.handleProcessedExecution(ctx, process, anExecution, anExecution.State)
+		}
+	}
+	anExecution.Data = make(map[string]interface{})
+	for _, parameter := range currentTask.Init {
+		if anExecution.Data[parameter.Name], err = process.Session.Expand(parameter.Value); err != nil {
+			return true, err
+		}
+	}
+	return false, err
 }
 
 func (s *Service) handleRunningTask(ctx context.Context, process *execution.Process, anExecution *execution.Execution) (bool, error) {
@@ -297,7 +312,7 @@ func (s *Service) updateExecutionState(ctx context.Context, process *execution.P
 	}
 	switch state {
 	case execution.TaskStateScheduled:
-		if err := s.queue.Publish(ctx, anExecution); err != nil {
+		if err = s.publishTaskExecution(ctx, process, anExecution); err != nil {
 			return fmt.Errorf("failed to publish task execution: %w", err)
 		}
 	}
@@ -318,7 +333,19 @@ func (s *Service) scheduleTask(ctx context.Context, process *execution.Process, 
 }
 
 // publishTaskExecution creates and publishes an execution for a single task
-func (s *Service) publishTaskExecution(ctx context.Context, anExecution *execution.Execution) error {
+func (s *Service) publishTaskExecution(ctx context.Context, process *execution.Process, anExecution *execution.Execution) error {
+	if value := ctx.Value(execution.EventKey); value != nil {
+		service := value.(*event.Service)
+		publisher, err := event.PublisherOf[*execution.Execution](service)
+		if err == nil {
+			task := process.LookupTask(anExecution.TaskID)
+			eCtx := anExecution.Context("scheduled", task)
+			anEvent := event.NewEvent[*execution.Execution](eCtx, anExecution)
+			if err = publisher.Publish(ctx, anEvent); err != nil {
+				log.Printf("failed to publish task execution event: %v", err)
+			}
+		}
+	}
 	return s.queue.Publish(ctx, anExecution)
 }
 
@@ -416,4 +443,9 @@ func (s *Service) handleTaskDone(currentTask *graph.Task, process *execution.Pro
 	}
 	return nil
 
+}
+
+func (s *Service) handleExecutionError(ctx context.Context, process *execution.Process, anExecution *execution.Execution, err error) error {
+	anExecution.Error += err.Error()
+	return s.handleProcessedExecution(ctx, process, anExecution, execution.TaskStateFailed)
 }

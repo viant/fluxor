@@ -34,9 +34,9 @@ func (s *Service) VerifyJWT(ctx context.Context, input *VerifyJWTInput, output *
 	// Create verifier configuration
 	config := &verifier.Config{}
 	if input.RSAKeyURL != "" {
-		config.RSA = &scy.Resource{
-			URL: input.RSAKeyURL,
-			Key: input.KeySecret,
+		// RSA expects a slice of *scy.Resource
+		config.RSA = []*scy.Resource{
+			{URL: input.RSAKeyURL, Key: input.KeySecret},
 		}
 	}
 	if input.HMACKeyURL != "" {

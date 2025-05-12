@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/types"
 	"github.com/viant/fluxor/service/dao"
@@ -74,13 +75,19 @@ func (s *Service) ensureWorkflow(ctx context.Context, input *RunInput) error {
 	if input.Workflow != nil {
 		return nil
 	}
-	workflow, err := s.workflowDao.Load(ctx, input.Location)
+	var aWorkflow *model.Workflow
+	var err error
+	if len(input.Source) > 0 {
+		aWorkflow, err = s.workflowDao.DecodeYAML(input.Source)
+	} else {
+		aWorkflow, err = s.workflowDao.Load(ctx, input.Location)
+	}
 	if err != nil {
 		return err
 	}
-	if workflow.Pipeline == nil {
+	if aWorkflow.Pipeline == nil {
 		return fmt.Errorf("workflow %v has no %v", input.Location, s.workflowDao.RootTaskNodeName())
 	}
-	input.Workflow = workflow
+	input.Workflow = aWorkflow
 	return nil
 }

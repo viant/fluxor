@@ -5,6 +5,7 @@ import (
 	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/types"
 	"github.com/viant/fluxor/service/dao"
+	"github.com/viant/fluxor/service/event"
 	"github.com/viant/fluxor/service/messaging"
 	"github.com/viant/fluxor/service/meta"
 	"github.com/viant/x"
@@ -20,6 +21,13 @@ func WithExtensionTypes(types ...*x.Type) Option {
 	}
 }
 
+func WithEventService(service *event.Service) Option {
+	return func(s *Service) {
+		s.eventService = service
+	}
+}
+
+// WithMetaService sets the meta service
 func WithMetaService(service *meta.Service) Option {
 	return func(s *Service) {
 		s.metaService = service
@@ -47,7 +55,7 @@ func WithRootTaskNodeName(name string) Option {
 	}
 }
 
-// WithProcessorDAO sets the processor DAO
+// WithProcessDAO sets the processor DAO
 func WithProcessDAO(dao dao.Service[string, execution.Process]) Option {
 	return func(s *Service) {
 		s.runtime.processorDAO = dao

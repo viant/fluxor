@@ -4,6 +4,9 @@ import (
 	"context"
 )
 
+// Vendor represents the name of a messaging vendor
+type Vendor string
+
 // Queue represents an abstract message queue for any payload type
 type Queue[T any] interface {
 	// Publish adds a new message with payload to the queue

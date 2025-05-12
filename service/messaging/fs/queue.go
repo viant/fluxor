@@ -92,16 +92,23 @@ func (m *Message[T]) Nack(err error) error {
 	return m.queue.failMessage(context.Background(), m)
 }
 
-// QueueConfig holds configuration for filesystem queue
-type QueueConfig struct {
+// Config holds configuration for filesystem queue
+type Config struct {
 	BasePath   string        // Base directory for queue files
 	MaxRetries int           // Maximum number of retry attempts
 	RetryDelay time.Duration // Delay between retries
 }
 
+// NamedConfig returns a named configuration for memory queue
+func NamedConfig(name string) Config {
+	config := DefaultConfig()
+	config.BasePath = fmt.Sprintf("/tmp/fluxor/queue/%s", name)
+	return config
+}
+
 // DefaultConfig returns a default queue configuration
-func DefaultConfig() QueueConfig {
-	return QueueConfig{
+func DefaultConfig() Config {
+	return Config{
 		BasePath:   "/tmp/fluxor/queue",
 		MaxRetries: 3,
 		RetryDelay: time.Second,
@@ -111,7 +118,7 @@ func DefaultConfig() QueueConfig {
 // Queue implements a filesystem-based messaging.Queue
 type Queue[T any] struct {
 	fs            afs.Service
-	config        QueueConfig
+	config        Config
 	pendingDir    string
 	processingDir string
 	completedDir  string
@@ -121,7 +128,7 @@ type Queue[T any] struct {
 }
 
 // NewQueue creates a new filesystem-based queue
-func NewQueue[T any](fs afs.Service, config QueueConfig) (*Queue[T], error) {
+func NewQueue[T any](fs afs.Service, config Config) (*Queue[T], error) {
 	if config.BasePath == "" {
 		return nil, fmt.Errorf("base path cannot be empty")
 	}

@@ -6,7 +6,9 @@ import (
 	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/graph"
+	"github.com/viant/fluxor/service/event"
 	"github.com/viant/structology/conv"
+	"log"
 )
 
 // Service represents a task executor service
@@ -32,6 +34,20 @@ func (s *service) Execute(ctx context.Context, anExecution *execution.Execution,
 	if err != nil {
 		return err
 	}
+
+	if value := ctx.Value(execution.EventKey); value != nil {
+		service := value.(*event.Service)
+		publisher, err := event.PublisherOf[*execution.Execution](service)
+		if err == nil {
+			task := process.LookupTask(anExecution.TaskID)
+			eCtx := anExecution.Context("executed", task)
+			anEvent := event.NewEvent[*execution.Execution](eCtx, anExecution)
+			if err = publisher.Publish(ctx, anEvent); err != nil {
+				log.Printf("failed to publish task execution event: %v", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -72,6 +88,7 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 			return err
 		}
 		input, err := session.TypedValue(signature.Input, taskInput)
+		anExecution.Input = input
 		if err != nil {
 			return err
 		}

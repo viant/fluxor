@@ -3,6 +3,7 @@ package execution
 import (
 	"fmt"
 	"github.com/viant/fluxor/model/graph"
+	"github.com/viant/fluxor/service/event"
 	"time"
 )
 
@@ -26,6 +27,20 @@ type Execution struct {
 	Meta         map[string]interface{} `json:"meta,omitempty"`
 	DependsOn    []string               `json:"dependencies"`
 	Dependencies map[string]TaskState   `json:"completed,omitempty"`
+}
+
+func (e *Execution) Context(eventType string, task *graph.Task) *event.Context {
+	ret := &event.Context{
+		EventType: eventType,
+		ProcessID: e.ProcessID,
+		TaskID:    e.TaskID,
+	}
+	if action := task.Action; action != nil {
+		ret.Service = action.Service
+		ret.Method = action.Method
+	}
+	return ret
+
 }
 
 // NewExecution creates a new execution for a task

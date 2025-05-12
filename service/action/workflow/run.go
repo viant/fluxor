@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"github.com/viant/afs"
 	"github.com/viant/afs/file"
 	"github.com/viant/afs/url"
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/types"
+	"github.com/viant/fluxor/tracing"
 )
 
 type RunInput struct {
@@ -18,6 +20,7 @@ type RunInput struct {
 	Tasks          []string               `json:"tasks,omitempty"`
 	Context        map[string]interface{} `json:"parameters,omitempty"`
 	Workflow       *model.Workflow        `json:"workflow,omitempty"`
+	Source         []byte                 `json:"source,omitempty"`
 	IgnoreError    bool                   `json:"throwError,omitempty"`
 	Async          bool                   `json:"wait,omitempty"`
 	WaitTimeInSec  int                    `json:"WaitTimeInSec,omitempty"`
@@ -28,9 +31,13 @@ type RunOutput struct {
 	Output    map[string]interface{}
 	Errors    map[string]string
 	State     string
+	Trace     *tracing.Trace `json:"trace,omitempty"`
 }
 
 func (i *RunInput) Init(ctx context.Context) {
+	if i.Location == "" {
+		return
+	}
 	if url.IsRelative(i.Location) && i.ParentLocation != "" { //for relative location try resolve with parent
 		parent, _ := url.Split(i.Location, file.Scheme)
 		candidate := url.Join(parent, i.Location)
@@ -48,19 +55,24 @@ func (i *RunInput) Validate(ctx context.Context) error {
 	if i.Workflow != nil {
 		return nil
 	}
-	if i.Location == "" {
+	if i.Location == "" && len(i.Source) == 0 {
 		return fmt.Errorf("location is required")
 	}
-
 	return nil
 }
 
 // print processes LLM responses to print structured data
-func (s *Service) run(ctx context.Context, in, out interface{}) error {
+// run executes a workflow and captures tracing information
+func (s *Service) run(ctx context.Context, in, out interface{}) (err error) {
 	input, ok := in.(*RunInput)
 	if !ok {
 		return types.NewInvalidInputError(in)
 	}
+	// start tracing for workflow run
+	trace := tracing.NewTrace("fluxor", "")
+	ctx = tracing.WithTrace(ctx, trace)
+	ctx, rootSpan := tracing.StartSpan(ctx, fmt.Sprintf("workflow:run %s", input.Location), "SERVER")
+	defer tracing.EndSpan(rootSpan, err)
 
 	input.Init(ctx)
 
@@ -101,5 +113,7 @@ func (s *Service) run(ctx context.Context, in, out interface{}) error {
 		output.Errors = waitOutput.Errors
 		output.State = waitOutput.State
 	}
+	// attach trace to output
+	output.Trace = trace
 	return nil
 }

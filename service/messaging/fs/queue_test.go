@@ -30,7 +30,7 @@ func TestQueue(t *testing.T) {
 	ctx := context.Background()
 
 	// Configure queue
-	config := QueueConfig{
+	config := Config{
 		BasePath:   tempDir,
 		MaxRetries: 2,
 		RetryDelay: 10 * time.Millisecond,
@@ -150,12 +150,12 @@ func TestQueue(t *testing.T) {
 func TestQueueInitialization(t *testing.T) {
 	// Test with invalid config
 	fs := afs.New()
-	_, err := NewQueue[TestPayload](fs, QueueConfig{})
+	_, err := NewQueue[TestPayload](fs, Config{})
 	assert.Error(t, err, "Should error with empty BasePath")
 
 	// Test with non-existent directory
 	tempDir := path.Join(os.TempDir(), fmt.Sprintf("queue-init-test-%d", time.Now().UnixNano()))
-	config := QueueConfig{
+	config := Config{
 		BasePath:   tempDir,
 		MaxRetries: 2,
 	}

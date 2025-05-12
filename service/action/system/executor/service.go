@@ -66,7 +66,6 @@ func (s *Service) Execute(ctx context.Context, input *Input, output *Output) err
 		command := &Command{
 			Input: cmd,
 		}
-
 		stdout, stderr, exitCode := s.executeCommand(ctx, session, cmd)
 		command.Output = stdout
 		command.Stderr = stderr

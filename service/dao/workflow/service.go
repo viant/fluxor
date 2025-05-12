@@ -4,16 +4,15 @@ import (
 	"context"
 	"fmt"
 	"github.com/viant/afs"
-	"github.com/viant/fluxor/service/dao/workflow/parameters"
-	"path/filepath"
-	"strings"
-
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/model/state"
+	"github.com/viant/fluxor/service/dao/workflow/parameters"
 	"github.com/viant/fluxor/service/meta"
 	"github.com/viant/fluxor/service/meta/yml"
 	"gopkg.in/yaml.v3"
+	"path/filepath"
+	"strings"
 )
 
 type Service struct {
@@ -24,6 +23,15 @@ type Service struct {
 // RootTaskNodeName returns the root task node name
 func (s *Service) RootTaskNodeName() string {
 	return s.rootTaskNodeName
+}
+
+// DecodeYAML decodes a workflow from YAML
+func (s *Service) DecodeYAML(encoded []byte) (*model.Workflow, error) {
+	var node yaml.Node
+	if err := yaml.Unmarshal(encoded, &node); err != nil {
+		return nil, err
+	}
+	return s.ParseWorkflow("", &node)
 }
 
 // Load loads a workflow from YAML at the specified URL
@@ -37,6 +45,10 @@ func (s *Service) Load(ctx context.Context, URL string) (*model.Workflow, error)
 		return nil, fmt.Errorf("failed to load workflow from %s: %w", URL, err)
 	}
 
+	return s.ParseWorkflow(URL, &node)
+}
+
+func (s *Service) ParseWorkflow(URL string, node *yaml.Node) (*model.Workflow, error) {
 	workflow := &model.Workflow{
 		Source: &model.Source{
 			URL: URL,
@@ -45,18 +57,19 @@ func (s *Service) Load(ctx context.Context, URL string) (*model.Workflow, error)
 	}
 
 	// Parse the YAML into our workflow model
-	if err := s.parseWorkflow((*yml.Node)(&node), workflow); err != nil {
+	if err := s.parseWorkflow((*yml.Node)(node), workflow); err != nil {
 		return nil, fmt.Errorf("failed to parse workflow from %s: %w", URL, err)
 	}
 
-	// Set workflow name based on URL if not set
-	workflowName := workflow.Name
+	// Set name based on URL if not set
+	if workflowName := workflow.Name; workflowName == "" {
+		workflow.Name = generateAnonymousName()
+	}
 
 	// Process tasks to assign IDs
 	if workflow.Pipeline != nil {
-		assignTaskIDs(workflow.Pipeline, workflowName, "")
+		assignTaskIDs(workflow.Pipeline, workflow.Name, "")
 	}
-
 	return workflow, nil
 }
 
@@ -311,9 +324,6 @@ func (s *Service) parseTask(id string, node *yml.Node) (*graph.Task, error) {
 				task.Goto = append(task.Goto, trans)
 			}
 		case "input":
-			if valueNode.Kind != yaml.MappingNode {
-				return fmt.Errorf("input should be a mapping")
-			}
 			if task.Action == nil {
 				task.Action = &graph.Action{}
 			}

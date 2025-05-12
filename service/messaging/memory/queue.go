@@ -23,8 +23,13 @@ func DefaultConfig() Config {
 		MaxRetries:  3,
 		RetryDelay:  100 * time.Millisecond,
 		DeadLetter:  true,
-		QueueBuffer: 100,
+		QueueBuffer: 10000,
 	}
+}
+
+// NamedConfig returns a named configuration for memory queue
+func NamedConfig(name string) Config {
+	return DefaultConfig()
 }
 
 // Message implements mbus.Message interface for in-memory queue
@@ -139,6 +144,8 @@ func (q *Queue[T]) Publish(ctx context.Context, t *T) error {
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
+		default:
+			return fmt.Errorf("queue is full")
 		}
 	}
 }

@@ -1,6 +1,7 @@
 package fluxor
 
 import (
+	"context"
 	"github.com/viant/afs"
 	"github.com/viant/afs/storage"
 	"github.com/viant/fluxor/extension"
@@ -16,6 +17,7 @@ import (
 	ememory "github.com/viant/fluxor/service/dao/execution/memory"
 	pmemory "github.com/viant/fluxor/service/dao/process/memory"
 	"github.com/viant/fluxor/service/dao/workflow"
+	"github.com/viant/fluxor/service/event"
 	"github.com/viant/fluxor/service/executor"
 	texecutor "github.com/viant/fluxor/service/executor"
 	"github.com/viant/fluxor/service/messaging"
@@ -27,17 +29,18 @@ import (
 )
 
 type Service struct {
-	runtime           *Runtime
-	metaService       *meta.Service
-	actions           *extension.Actions
-	extensionTypes    []*x.Type
-	extensionServices []types.Service
-	executor          executor.Service
-	queue             messaging.Queue[execution.Execution]
-	rootTaskNodeName  string
-	metaBaseURL       string
-	metaFsOptions     []storage.Option
-	processorWorkers  int
+	runtime           *Runtime                             `json:"runtime,omitempty"`
+	metaService       *meta.Service                        `json:"metaService,omitempty"`
+	extensionTypes    []*x.Type                            `json:"extensionTypes,omitempty"`
+	extensionServices []types.Service                      `json:"extensionServices,omitempty"`
+	executor          executor.Service                     `json:"executor,omitempty"`
+	queue             messaging.Queue[execution.Execution] `json:"queue,omitempty"`
+	rootTaskNodeName  string                               `json:"rootTaskNodeName,omitempty"`
+	metaBaseURL       string                               `json:"metaBaseURL,omitempty"`
+	metaFsOptions     []storage.Option                     `json:"metaFsOptions,omitempty"`
+	processorWorkers  int                                  `json:"processorWorkers,omitempty"`
+	actions           *extension.Actions                   `json:"actions,omitempty"`
+	eventService      *event.Service                       `json:"eventService,omitempty"`
 }
 
 func (s *Service) init(options []Option) {
@@ -65,6 +68,15 @@ func (s *Service) init(options []Option) {
 	s.actions.Register(s.runtime.workflowService)
 	s.runtime.allocator = allocator.New(s.runtime.processorDAO, s.runtime.taskExecutionDao, s.queue, allocator.DefaultConfig())
 
+	if s.eventService == nil {
+		s.eventService, _ = event.New("memory", event.WithNewMemoryQueueConfig(mmemory.NamedConfig))
+	}
+
+}
+
+// EventService returns event service
+func (s *Service) EventService() *event.Service {
+	return s.eventService
 }
 
 func (s *Service) RegisterExtensionTypes(types ...*x.Type) {
@@ -104,6 +116,15 @@ func (s *Service) ensureBaseSetup() {
 	if s.runtime.taskExecutionDao == nil {
 		s.runtime.taskExecutionDao = ememory.New()
 	}
+
+}
+
+func (s *Service) NewContext(ctx context.Context) context.Context {
+	return execution.NewContext(ctx, s.actions, s.eventService)
+}
+
+func (s *Service) Actions() *extension.Actions {
+	return s.actions
 }
 
 func (s *Service) RegisterExtensionType(aType *x.Type) {

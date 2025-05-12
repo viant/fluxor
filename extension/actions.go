@@ -3,6 +3,7 @@ package extension
 import (
 	"github.com/viant/fluxor/model/types"
 	"github.com/viant/x"
+	"reflect"
 	"sync"
 )
 
@@ -10,6 +11,7 @@ import (
 type Actions struct {
 	types    *Types
 	services map[string]types.Service
+	byType   map[reflect.Type]types.Service
 	mux      sync.RWMutex
 }
 
@@ -33,12 +35,32 @@ func (s *Actions) Register(service types.Service) {
 		typer.InitTypes(s.types)
 	}
 	s.services[service.Name()] = service
+	rType := TypeServiceOf(service)
+	s.byType[rType] = service
+}
+
+func TypeServiceOf(service types.Service) reflect.Type {
+	rType := reflect.TypeOf(service)
+	if rType.Kind() == reflect.Ptr {
+		rType = rType.Elem()
+	}
+	return rType
+}
+
+func LookupService[T types.Service](actions *Actions) T {
+	var t T
+	key := TypeServiceOf(t)
+	actions.mux.RLock()
+	service := actions.byType[key]
+	actions.mux.RUnlock()
+	return service.(T)
 }
 
 // NewActions creates a new action service
 func NewActions(goTypes ...*x.Type) *Actions {
 	ret := &Actions{
 		types:    NewTypes(),
+		byType:   make(map[reflect.Type]types.Service),
 		services: make(map[string]types.Service),
 	}
 	for _, t := range goTypes {

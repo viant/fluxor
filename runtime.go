@@ -27,6 +27,11 @@ func (r *Runtime) LoadWorkflow(ctx context.Context, location string) (*model.Wor
 	return r.workflowDAO.Load(ctx, location)
 }
 
+// DecideYAMLWorkflow loads a workflow
+func (r *Runtime) DecodeYAMLWorkflow(data []byte) (*model.Workflow, error) {
+	return r.workflowDAO.DecodeYAML(data)
+}
+
 // StartProcess starts a new process
 func (r *Runtime) StartProcess(ctx context.Context, aWorkflow *model.Workflow, initialState map[string]interface{}, tasks ...string) (*execution.Process, execution.Wait, error) {
 	process, err := r.processor.StartProcess(ctx, aWorkflow, initialState, tasks...)

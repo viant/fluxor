@@ -9,6 +9,7 @@ import (
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/executor"
 	"github.com/viant/fluxor/service/messaging"
+	"github.com/viant/fluxor/tracing"
 	"sync"
 	"time"
 )
@@ -100,7 +101,7 @@ func (s *Service) Start(ctx context.Context) error {
 	return nil
 }
 
-// run processDAO messages from the queue
+// run processes messages from the queue
 func (w *worker) run() {
 	defer w.service.workerWg.Done()
 
@@ -134,16 +135,22 @@ func (w *worker) run() {
 }
 
 // StartProcess begins execution of a workflow
-func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, init map[string]interface{}, customTasks ...string) (*execution.Process, error) {
+func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, init map[string]interface{}, customTasks ...string) (aProcess *execution.Process, err error) {
+	// start tracing span for process start
+	ctx, span := tracing.StartSpan(ctx, fmt.Sprintf("processor.StartProcess %s", workflow.Name), "INTERNAL")
+	defer tracing.EndSpan(span, err)
+	span.WithAttributes(map[string]string{"workflow.name": workflow.Name})
 	if workflow == nil {
-		return nil, fmt.Errorf("workflow cannot be nil")
+		err = fmt.Errorf("workflow cannot be nil")
+		return
 	}
 
-	// Generate a unique aProcess ID
+	// Generate a unique process ID
 	processID := workflow.Name + "/" + uuid.New().String()
+	span.WithAttributes(map[string]string{"process.id": processID})
 
-	// Create the aProcess
-	aProcess := execution.NewProcess(processID, workflow.Name, workflow, init)
+	// Create the process
+	aProcess = execution.NewProcess(processID, workflow.Name, workflow, init)
 
 	// Apply initial state from workflow
 	if workflow.Init != nil {
@@ -155,12 +162,11 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	// Set aProcess state to running
 	aProcess.SetState(execution.StateRunning)
 
-	err := s.processDAO.Save(ctx, aProcess)
-	if err != nil {
-		return nil, fmt.Errorf("failed to save aProcess: %w", err)
+	if err = s.processDAO.Save(ctx, aProcess); err != nil {
+		err = fmt.Errorf("failed to save process: %w", err)
+		return
 	}
-
-	// No need to schedule tasks here - let the allocator do that
+	// No need to schedule tasks here - allocator will pick up
 	return aProcess, nil
 }
 
