@@ -49,3 +49,130 @@ func (t *Task) IsAutoPause() bool {
 	}
 	return *t.AutoPause
 }
+
+// Clone creates a deep copy of a task
+func (t *Task) Clone() *Task {
+	if t == nil {
+		return nil
+	}
+
+	clone := &Task{
+		ID:        t.ID,
+		Name:      t.Name,
+		Namespace: t.Namespace,
+		When:      t.When,
+		Async:     t.Async,
+	}
+
+	// Clone DependsOn
+	if t.DependsOn != nil {
+		clone.DependsOn = make([]string, len(t.DependsOn))
+		copy(clone.DependsOn, t.DependsOn)
+	}
+
+	// Clone Init parameters
+	if t.Init != nil {
+		clone.Init = make(state.Parameters, len(t.Init))
+		copy(clone.Init, t.Init)
+	}
+
+	// Clone Action
+	if t.Action != nil {
+		clone.Action = &Action{
+			Service: t.Action.Service,
+			Method:  t.Action.Method,
+			Input:   t.Action.Input,
+		}
+	}
+
+	// Clone Tasks recursively
+	if t.Tasks != nil {
+		clone.Tasks = make([]*Task, len(t.Tasks))
+		for i, subtask := range t.Tasks {
+			clone.Tasks[i] = subtask.Clone()
+		}
+	}
+
+	// Clone Post parameters
+	if t.Post != nil {
+		clone.Post = make(state.Parameters, len(t.Post))
+		copy(clone.Post, t.Post)
+	}
+
+	// Clone Template
+	if t.Template != nil {
+		clone.Template = &Template{
+			Task:     t.Template.Task.Clone(),
+			Selector: t.Template.Selector,
+		}
+	}
+
+	// Clone Goto
+	if t.Goto != nil {
+		clone.Goto = make([]*Transition, len(t.Goto))
+		for i, transition := range t.Goto {
+			clone.Goto[i] = &Transition{
+				When: transition.When,
+				Task: transition.Task,
+			}
+		}
+	}
+	return clone
+}
+
+/*
+
+// cloneGraphTask creates a deep copy of a graph.Task, including nested tasks, templates, and transitions.
+func cloneGraphTask(task *graph.Task) *graph.Task {
+   if task == nil {
+       return nil
+   }
+   clone := &graph.Task{
+       ID:        task.ID,
+       Name:      task.Name,
+       Namespace: task.Namespace,
+       When:      task.When,
+       Async:     task.Async,
+   }
+   if task.DependsOn != nil {
+       clone.DependsOn = append([]string{}, task.DependsOn...)
+   }
+   if task.Init != nil {
+       clone.Init = make(state.Parameters, len(task.Init))
+       copy(clone.Init, task.Init)
+   }
+   if task.Action != nil {
+       clone.Action = &graph.Action{
+           Service: task.Action.Service,
+           Method:  task.Action.Method,
+           Input:   task.Action.Input,
+       }
+   }
+   if task.Tasks != nil {
+       clone.Tasks = make([]*graph.Task, len(task.Tasks))
+       for i, t := range task.Tasks {
+           clone.Tasks[i] = t.Clone()
+       }
+   }
+   if task.Post != nil {
+       clone.Post = make(state.Parameters, len(task.Post))
+       copy(clone.Post, task.Post)
+   }
+   if task.Template != nil {
+       clone.Template = &graph.Template{
+           Task:     task.Template.Task.Clone(),
+           Selector: task.Template.Selector,
+       }
+   }
+   if task.Goto != nil {
+       clone.Goto = make([]*graph.Transition, len(task.Goto))
+       for i, tr := range task.Goto {
+           clone.Goto[i] = &graph.Transition{
+               When: tr.When,
+               Task: tr.Task,
+           }
+       }
+   }
+   return clone
+}
+*/

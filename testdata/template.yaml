@@ -1,0 +1,15 @@
+name: template-demo
+description: simple template to print each order
+pipeline:
+  printOrders:
+    template:
+      selector:
+        - name: order
+          value: "$orders"
+      task:
+        printOne:
+          action:
+            service: printer
+            method: print
+            input:
+              message: "$order"

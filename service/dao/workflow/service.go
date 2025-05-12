@@ -328,6 +328,39 @@ func (s *Service) parseTask(id string, node *yml.Node) (*graph.Task, error) {
 				task.Action = &graph.Action{}
 			}
 			task.Action.Input = valueNode.Interface()
+
+		// Handle template definitions: repeat a sub-task over a collection
+		case "template":
+			if valueNode.Kind == yaml.MappingNode {
+				tmpl := &graph.Template{}
+				// parse selector and inner task
+				if err := valueNode.Pairs(func(innerKey string, innerNode *yml.Node) error {
+					switch strings.ToLower(innerKey) {
+					case "selector":
+						params, err := parseSelector(innerNode)
+						if err != nil {
+							return err
+						}
+						tmpl.Selector = &params
+					case "task":
+						if innerNode.Kind == yaml.MappingNode {
+							// expect a single child defining the task id
+							return innerNode.Pairs(func(taskKey string, taskNode *yml.Node) error {
+								child, err := s.parseTask(taskKey, taskNode)
+								if err != nil {
+									return err
+								}
+								tmpl.Task = child
+								return nil
+							})
+						}
+					}
+					return nil
+				}); err != nil {
+					return fmt.Errorf("failed to parse template for task %s: %w", id, err)
+				}
+				task.Template = tmpl
+			}
 		default:
 			// It could be a sub-task if the value is a mapping
 			if valueNode.Kind == yaml.MappingNode {
@@ -407,6 +440,36 @@ func parseParameters(node *yml.Node) (state.Parameters, error) {
 		return nil, err
 	}
 
+	return params, nil
+}
+
+// parseSelector parses a sequence of selector parameter mappings into state.Parameters
+func parseSelector(node *yml.Node) (state.Parameters, error) {
+	var params state.Parameters
+	if node.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("selector node should be a sequence")
+	}
+	for _, item := range node.Content {
+		if item.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("selector items must be mappings")
+		}
+		var name string
+		var value interface{}
+
+		mappingItem := (*yml.Node)(item)
+		if err := mappingItem.Pairs(func(key string, valueNode *yml.Node) error {
+			switch strings.ToLower(key) {
+			case "name":
+				name = valueNode.Value
+			case "value":
+				value = valueNode.Interface()
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		params = append(params, &state.Parameter{Name: name, Value: value})
+	}
 	return params, nil
 }
 

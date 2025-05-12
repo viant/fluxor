@@ -136,14 +136,14 @@ func (w *Workflow) Clone() *Workflow {
 
 	// Clone Pipeline
 	if w.Pipeline != nil {
-		clone.Pipeline = cloneTask(w.Pipeline)
+		clone.Pipeline = w.Pipeline.Clone()
 	}
 
 	// Clone DependsOn
 	if w.Dependencies != nil {
 		clone.Dependencies = make(map[string]*graph.Task, len(w.Dependencies))
 		for k, v := range w.Dependencies {
-			clone.Dependencies[k] = cloneTask(v)
+			clone.Dependencies[k] = v.Clone()
 		}
 	}
 
@@ -158,77 +158,6 @@ func (w *Workflow) Clone() *Workflow {
 		clone.Config = make(map[string]interface{}, len(w.Config))
 		for k, v := range w.Config {
 			clone.Config[k] = v
-		}
-	}
-
-	return clone
-}
-
-// cloneTask creates a deep copy of a task
-func cloneTask(task *graph.Task) *graph.Task {
-	if task == nil {
-		return nil
-	}
-
-	clone := &graph.Task{
-		ID:        task.ID,
-		Name:      task.Name,
-		Namespace: task.Namespace,
-		When:      task.When,
-		Async:     task.Async,
-	}
-
-	// Clone DependsOn
-	if task.DependsOn != nil {
-		clone.DependsOn = make([]string, len(task.DependsOn))
-		copy(clone.DependsOn, task.DependsOn)
-	}
-
-	// Clone Init parameters
-	if task.Init != nil {
-		clone.Init = make(state.Parameters, len(task.Init))
-		copy(clone.Init, task.Init)
-	}
-
-	// Clone Action
-	if task.Action != nil {
-		clone.Action = &graph.Action{
-			Service: task.Action.Service,
-			Method:  task.Action.Method,
-			Input:   task.Action.Input,
-		}
-	}
-
-	// Clone Tasks recursively
-	if task.Tasks != nil {
-		clone.Tasks = make([]*graph.Task, len(task.Tasks))
-		for i, subtask := range task.Tasks {
-			clone.Tasks[i] = cloneTask(subtask)
-		}
-	}
-
-	// Clone Post parameters
-	if task.Post != nil {
-		clone.Post = make(state.Parameters, len(task.Post))
-		copy(clone.Post, task.Post)
-	}
-
-	// Clone Template
-	if task.Template != nil {
-		clone.Template = &graph.Template{
-			Task:     cloneTask(task.Template.Task),
-			Selector: task.Template.Selector,
-		}
-	}
-
-	// Clone Goto
-	if task.Goto != nil {
-		clone.Goto = make([]*graph.Transition, len(task.Goto))
-		for i, transition := range task.Goto {
-			clone.Goto[i] = &graph.Transition{
-				When: transition.When,
-				Task: transition.Task,
-			}
 		}
 	}
 

@@ -11,8 +11,45 @@ import (
 	"github.com/viant/fluxor/service/event"
 	"github.com/viant/fluxor/service/messaging"
 	"log"
+	"reflect"
 	"time"
 )
+
+// toInterfaceSlice converts an array or slice value to a []interface{}.
+func toInterfaceSlice(raw interface{}) ([]interface{}, error) {
+	v := reflect.ValueOf(raw)
+	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
+		return nil, fmt.Errorf("expected slice or array, got %T", raw)
+	}
+	length := v.Len()
+	result := make([]interface{}, length)
+	for i := 0; i < length; i++ {
+		result[i] = v.Index(i).Interface()
+	}
+	return result, nil
+}
+
+// addDynamicTask adds a cloned task and its subtasks to the process's task map
+func addDynamicTask(allTasks map[string]*graph.Task, task *graph.Task) {
+	if task == nil {
+		return
+	}
+	if _, exists := allTasks[task.ID]; exists {
+		return
+	}
+	allTasks[task.ID] = task
+	if task.Name != "" {
+		allTasks[task.Name] = task
+	}
+	// traverse subtasks
+	for _, sub := range task.Tasks {
+		addDynamicTask(allTasks, sub)
+	}
+	// include nested template subgraph
+	if task.Template != nil {
+		addDynamicTask(allTasks, task.Template.Task)
+	}
+}
 
 // Config represents allocator service configuration
 type Config struct {
@@ -182,6 +219,7 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 
 func (s *Service) handlePendingTask(ctx context.Context, process *execution.Process, currentTask *graph.Task, anExecution *execution.Execution) (bool, error) {
 	var err error
+	// Evaluate conditional execution
 	if currentTask.When != "" {
 		canRun, err := evaluateCondition(currentTask.When, process, currentTask, anExecution, true)
 		if err != nil {
@@ -192,10 +230,70 @@ func (s *Service) handlePendingTask(ctx context.Context, process *execution.Proc
 			return true, s.handleProcessedExecution(ctx, process, anExecution, anExecution.State)
 		}
 	}
-	anExecution.Data = make(map[string]interface{})
-	for _, parameter := range currentTask.Init {
-		if anExecution.Data[parameter.Name], err = process.Session.Expand(parameter.Value); err != nil {
+	// Handle templated (repeat) tasks
+	if currentTask.Template != nil {
+		// Selector must be present
+		selParams := currentTask.Template.Selector
+		if selParams == nil || len(*selParams) == 0 {
+			return true, fmt.Errorf("template selector is empty for task %s", currentTask.ID)
+		}
+		// Expand the first selector into a slice/array
+		first := (*selParams)[0]
+		raw, err := process.Session.Expand(first.Value)
+		if err != nil {
+			return true, fmt.Errorf("failed to expand template selector for task %s: %w", currentTask.ID, err)
+		}
+		items, err := toInterfaceSlice(raw)
+		if err != nil {
+			return true, fmt.Errorf("template selector for task %s must be slice or array: %w", currentTask.ID, err)
+		}
+		// For each element, clone the template subgraph and create an execution
+		allTasks := process.AllTasks()
+		for idx, item := range items {
+			// Deep-clone the template task tree
+			clone := currentTask.Template.Task.Clone()
+			// Assign a unique ID for the clone
+			clone.ID = fmt.Sprintf("%s[%d]", currentTask.ID, idx)
+			// Prepare execution with element-bound data
+			exec := execution.NewExecution(process.ID, currentTask, clone)
+			exec.Data = make(map[string]interface{})
+			// Bind selector parameters: first => element, others => index or expanded
+			for si, param := range *selParams {
+				name := param.Name
+				if si == 0 {
+					exec.Data[name] = item
+				} else if str, ok := param.Value.(string); ok && str == "$i" {
+					exec.Data[name] = idx
+				} else {
+					// fallback expand any other selector value
+					if val, _ := process.Session.Expand(param.Value); val != nil {
+						exec.Data[name] = val
+					}
+				}
+			}
+			// Push the new execution on the stack
+			process.Push(exec)
+			// register cloned task in lookup map
+			addDynamicTask(allTasks, clone)
+		}
+		// Mark the driver task as waiting for subtasks
+		if err := s.updateExecutionState(ctx, process, anExecution, execution.TaskStateWaitForSubTasks); err != nil {
 			return true, err
+		}
+		return true, nil
+	}
+
+	// Normal task: preserve existing Data (e.g. from template) and apply Init params
+	if anExecution.Data == nil {
+		anExecution.Data = make(map[string]interface{})
+	}
+	for _, parameter := range currentTask.Init {
+		if _, exists := anExecution.Data[parameter.Name]; !exists {
+			if val, expErr := process.Session.Expand(parameter.Value); expErr != nil {
+				return true, expErr
+			} else {
+				anExecution.Data[parameter.Name] = val
+			}
 		}
 	}
 	return false, err

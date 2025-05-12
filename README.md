@@ -280,6 +280,28 @@ parallelTasks:
         message: "Running in parallel 2"
 ```
 
+### Template Tasks
+
+Template tasks allow you to repeat a sub-task over each element of a collection. Use the `template` keyword with a `selector` and an inner `task` definition:
+
+```yaml
+pipeline:
+  processOrders:
+    template:
+      selector:
+        - name: order
+          value: "$orders"
+      task:
+        processOne:
+          action:
+            service: printer
+            method: print
+          input:
+            message: "Order: $order"
+```
+
+In this example, `processOrders` will spawn one `processOne` task for each element in `orders`, binding the current element to `$order` in each task.
+
 
 ## Contributing
 

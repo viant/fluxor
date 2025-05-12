@@ -146,31 +146,31 @@ const (
 	spanContextKey  contextKey = "tracing-span"
 )
 
-// WithTrace returns a new context with the provided Trace
 // WithTrace returns a new context with the provided Trace.
+func WithTrace(ctx context.Context, t *Trace) context.Context {
 	return context.WithValue(ctx, traceContextKey, t)
-   return context.WithValue(ctx, traceContextKey, t)
-t
 }
+
 // TraceFromContext retrieves the Trace from the context if set.
+func TraceFromContext(ctx context.Context) (*Trace, bool) {
 	t, ok := ctx.Value(traceContextKey).(*Trace)
 	return t, ok
-   return t, ok
- 
 }
+
 // WithSpan returns a new context with the provided Span set as current.
+func WithSpan(ctx context.Context, span *Span) context.Context {
 	return context.WithValue(ctx, spanContextKey, span)
-   return context.WithValue(ctx, spanContextKey, span)
-a
 }
+
 // SpanFromContext retrieves the current Span from the context if set.
+func SpanFromContext(ctx context.Context) (*Span, bool) {
 	s, ok := ctx.Value(spanContextKey).(*Span)
 	return s, ok
-   return s, ok
-.
 }
+
 // StartSpan creates a new child span with the given name and kind in the context.
 // It appends the new span to the Trace (if present) and returns the updated context and span.
+func StartSpan(ctx context.Context, name, kind string) (context.Context, *Span) {
 	var parentID *string
 	if ps, ok := SpanFromContext(ctx); ok && ps != nil {
 		parentID = &ps.SpanID
@@ -194,11 +194,10 @@ a
 	}
 	ctx = WithSpan(ctx, span)
 	return ctx, span
-   return ctx, span
-e
 }
+
 // EndSpan marks the span end time and status based on the provided error.
+func EndSpan(span *Span, err error) {
 	span.OnDone()
 	span.SetStatus(err)
-   span.SetStatus(err)
 }
