@@ -22,7 +22,7 @@ func New() *ExpressionEvaluator {
 
 // Evaluate evaluates an expression string with variables from the context
 func (e *ExpressionEvaluator) Evaluate(expr string, variables map[string]interface{}) interface{} {
-	// Check if this is a comparison expression wrapped in {}
+
 	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
 		innerExpr := expr[1 : len(expr)-1]
 		if containsExpressionOperators(innerExpr) {
@@ -30,14 +30,53 @@ func (e *ExpressionEvaluator) Evaluate(expr string, variables map[string]interfa
 		}
 	}
 
-	// Check if this is a special function wrapped in ${}
+	//
+	//
+	//
+	//Check if this is a special function wrapped in ${}
 	if strings.HasPrefix(expr, "${") && strings.HasSuffix(expr, "}") {
 		innerExpr := expr[2 : len(expr)-1]
 
-		// Check for special functions
-		if strings.HasPrefix(innerExpr, "len(") && strings.HasSuffix(innerExpr, ")") {
-			arg := innerExpr[4 : len(innerExpr)-1]
-			return e.evaluateLen(arg, variables)
+		// Check for special functions, including len() comparisons
+		if strings.HasPrefix(innerExpr, "len(") {
+			// find closing parenthesis of len()
+			idx := strings.Index(innerExpr, ")")
+			if idx < 0 {
+				return 0
+			}
+			arg := innerExpr[4:idx]
+			// remainder may contain a comparison operator
+			rest := strings.TrimSpace(innerExpr[idx+1:])
+			if rest == "" {
+				// simple len() call
+				return e.evaluateLen(arg, variables)
+			}
+			// handle comparison operations on len()
+			// operators in order of precedence (longer first)
+			ops := []string{">=", "<=", "==", "!=", ">", "<"}
+			for _, op := range ops {
+				if strings.HasPrefix(rest, op) {
+					rhs := strings.TrimSpace(rest[len(op):])
+					leftVal := e.evaluateLen(arg, variables)
+					rightVal := Evaluate(rhs, variables)
+					cmp := compareValues(leftVal, rightVal)
+					switch op {
+					case "==":
+						return cmp == 0
+					case "!=":
+						return cmp != 0
+					case ">":
+						return cmp > 0
+					case "<":
+						return cmp < 0
+					case ">=":
+						return cmp >= 0
+					case "<=":
+						return cmp <= 0
+					}
+				}
+			}
+			// fall through to other handlers if no op matched
 		} else if strings.HasPrefix(innerExpr, "is nil(") && strings.HasSuffix(innerExpr, ")") {
 			arg := innerExpr[7 : len(innerExpr)-1]
 			return e.evaluateIsNil(arg, variables)
@@ -308,6 +347,8 @@ func Evaluate(expr string, from map[string]interface{}) interface{} {
 	// Parse the expression
 	e, err := parser.ParseExpr(processedExpr)
 	if err != nil {
+		evaluator := New()
+		return evaluator.Evaluate(expr, from)
 		return nil
 	}
 
@@ -319,6 +360,8 @@ func Evaluate(expr string, from map[string]interface{}) interface{} {
 // processExpressionVariables replaces all variable references in the expression
 // with their actual values from the context
 func processExpressionVariables(expr string, from map[string]interface{}) string {
+	// Convert single-quoted literals (e.g., 'text') to double-quoted for Go parsing
+	expr = regexp.MustCompile(`'([^']*)'`).ReplaceAllString(expr, `"$1"`)
 	// Find all variable references in the expression
 	parts := strings.FieldsFunc(expr, func(c rune) bool {
 		return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.')
@@ -375,7 +418,7 @@ func isVariableReference(s string) bool {
 func evaluateAst(node ast.Expr) interface{} {
 	switch n := node.(type) {
 	case *ast.BasicLit:
-		// Handle literals (numbers, strings, etc.)
+		// Handle literals (numbers, strings, and character literals)
 		switch n.Kind {
 		case token.INT:
 			val, _ := strconv.Atoi(n.Value)
@@ -383,8 +426,8 @@ func evaluateAst(node ast.Expr) interface{} {
 		case token.FLOAT:
 			val, _ := strconv.ParseFloat(n.Value, 64)
 			return val
-		case token.STRING:
-			// Remove quotes from string
+		case token.STRING, token.CHAR:
+			// Remove surrounding quotes or apostrophes
 			return strings.Trim(n.Value, "\"'")
 		}
 

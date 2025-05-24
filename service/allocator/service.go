@@ -12,6 +12,7 @@ import (
 	"github.com/viant/fluxor/service/messaging"
 	"log"
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -481,7 +482,7 @@ func (s *Service) handleProcessedExecution(ctx context.Context, process *executi
 
 	if state == execution.TaskStateCompleted {
 		output := anExecution.Output
-		var outputMap = make(map[string]string)
+		var outputMap = make(map[string]interface{})
 		if data, err := json.Marshal(anExecution.Output); err == nil {
 			if err = json.Unmarshal(data, &outputMap); err == nil {
 				output = outputMap
@@ -512,7 +513,7 @@ func (s *Service) handleProcessedExecution(ctx context.Context, process *executi
 	return nil
 }
 
-func (s *Service) handleTaskDone(currentTask *graph.Task, process *execution.Process, anExecution *execution.Execution, outputMap map[string]string) error {
+func (s *Service) handleTaskDone(currentTask *graph.Task, process *execution.Process, anExecution *execution.Execution, outputMap map[string]interface{}) error {
 
 	source := process.Session.Clone()
 	for k, v := range outputMap {
@@ -522,6 +523,12 @@ func (s *Service) handleTaskDone(currentTask *graph.Task, process *execution.Pro
 	for _, parameter := range currentTask.Post {
 		evaluated, err := expander.Expand(parameter.Value, source.State)
 		if err == nil {
+			name := parameter.Name
+			isAppend := strings.HasSuffix(name, "[]")
+			if isAppend {
+				process.Session.Append(strings.TrimRight(name, "[]"), evaluated)
+				continue
+			}
 			process.Session.Set(parameter.Name, evaluated)
 		}
 	}

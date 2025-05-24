@@ -42,6 +42,87 @@ type Workflow struct {
 	AutoPause *bool `json:"autoPause,omitempty" yaml:"autoPause,omitempty"`
 }
 
+// NewWorkflow creates a new workflow with the given name
+func NewWorkflow(name string) *Workflow {
+	return &Workflow{
+		Name:         name,
+		Dependencies: make(map[string]*graph.Task),
+	}
+}
+
+// WithDescription sets the description of the workflow
+func (w *Workflow) WithDescription(description string) *Workflow {
+	w.Description = description
+	return w
+}
+
+// WithVersion sets the version of the workflow
+func (w *Workflow) WithVersion(version string) *Workflow {
+	w.Version = version
+	return w
+}
+
+// WithInit adds an initialization parameter to the workflow
+func (w *Workflow) WithInit(name string, value interface{}) *Workflow {
+	if w.Init == nil {
+		w.Init = make(state.Parameters, 0)
+	}
+	w.Init.Add(name, value)
+	return w
+}
+
+// WithPost adds a post-execution parameter to the workflow
+func (w *Workflow) WithPost(name string, value interface{}) *Workflow {
+	if w.Post == nil {
+		w.Post = make(state.Parameters, 0)
+	}
+	w.Post.Add(name, value)
+	return w
+}
+
+// WithConfig adds a configuration parameter to the workflow
+func (w *Workflow) WithConfig(key string, value interface{}) *Workflow {
+	if w.Config == nil {
+		w.Config = make(map[string]interface{})
+	}
+	w.Config[key] = value
+	return w
+}
+
+// WithPipeline sets the main pipeline task for the workflow
+func (w *Workflow) WithPipeline(pipeline *graph.Task) *Workflow {
+	w.Pipeline = pipeline
+	return w
+}
+
+// AddDependency adds a dependency task to the workflow
+func (w *Workflow) AddDependency(task *graph.Task) *Workflow {
+	if w.Dependencies == nil {
+		w.Dependencies = make(map[string]*graph.Task)
+	}
+	w.Dependencies[task.ID] = task
+	return w
+}
+
+// NewTask creates a new task with the given name and adds it to the workflow pipeline
+func (w *Workflow) NewTask(name string) *graph.Task {
+	if w.Pipeline == nil {
+		w.Pipeline = &graph.Task{
+			ID:    w.Name,
+			Tasks: make([]*graph.Task, 0),
+		}
+	}
+
+	task := &graph.Task{
+		ID:        w.Pipeline.ID + "/" + name,
+		Name:      name,
+		Namespace: name,
+	}
+
+	w.Pipeline.Tasks = append(w.Pipeline.Tasks, task)
+	return task
+}
+
 // Import represents a package import
 type Import struct {
 	Package string `json:"package,omitempty" yaml:"package,omitempty"`

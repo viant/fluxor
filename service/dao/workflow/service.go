@@ -423,7 +423,7 @@ func parseParameters(node *yml.Node) (state.Parameters, error) {
 	}
 
 	err := node.Pairs(func(key string, valueNode *yml.Node) error {
-		if strings.Contains(key, "[") {
+		if strings.Contains(key, "[") && !strings.HasSuffix(key, "[]") {
 			parameter, err := parameters.Parse([]byte(key))
 			if err != nil {
 				return fmt.Errorf("failed to parse parameter: %w", err)

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model/execution"
@@ -93,6 +94,13 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 			return err
 		}
 		err = method(ctx, input, output)
+
+		tt, _ := json.Marshal(task)
+		in, _ := json.Marshal(input)
+		out, _ := json.Marshal(output)
+		fmt.Println(string(tt))
+		fmt.Println(string(in))
+		fmt.Println(string(out))
 		anExecution.Output = output
 		if err != nil {
 			return err

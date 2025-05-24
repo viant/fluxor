@@ -158,6 +158,27 @@ func TestExpressionEvaluator(t *testing.T) {
 			from:     map[string]interface{}{"x": 10, "y": 3},
 			expected: true,
 		},
+		// support len() comparisons
+		{
+			name: "len comparison greater than",
+			expr: "${len(users) > 3}",
+			from: map[string]interface{}{"users": []interface{}{
+				map[string]interface{}{"id": "a"},
+				map[string]interface{}{"id": "b"},
+				map[string]interface{}{"id": "c"},
+				map[string]interface{}{"id": "d"},
+			},
+			},
+			expected: true,
+		},
+		{
+			name: "len comparison not greater than",
+			expr: "${len(users) > 3}",
+			from: map[string]interface{}{
+				"foo":   1,
+				"users": []interface{}{"a", "b", "c"}},
+			expected: false,
+		},
 	}
 
 	for _, tc := range tests {

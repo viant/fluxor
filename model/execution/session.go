@@ -36,6 +36,47 @@ func (s *Session) Get(key string) (interface{}, bool) {
 	return value, exists
 }
 
+func (s *Session) Append(key string, value interface{}) {
+	if value == nil { // nothing to add
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Ensure we have a destination slice ([]interface{}).
+	var dst []interface{}
+	if cur, ok := s.State[key]; ok && cur != nil {
+		switch v := cur.(type) {
+		case []interface{}:
+			dst = v
+		default:
+			dst = []interface{}{v}
+		}
+	}
+
+	// Helper to append one element.
+	add := func(elem interface{}) {
+		if elem != nil {
+			dst = append(dst, elem)
+		}
+	}
+
+	// If the incoming value is a slice/array, append its elements.
+	rv := reflect.ValueOf(value)
+	if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
+		if rv.Len() == 0 { // empty slice ⇒ nothing to add
+			return
+		}
+		for i := 0; i < rv.Len(); i++ {
+			add(rv.Index(i).Interface())
+		}
+	} else { // single element
+		add(value)
+	}
+
+	s.State[key] = dst
+}
+
 func (s *Session) TaskSession(from map[string]interface{}, options ...Option) *Session {
 	ret := NewSession(s.ID, options...)
 

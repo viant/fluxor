@@ -50,6 +50,95 @@ func (t *Task) IsAutoPause() bool {
 	return *t.AutoPause
 }
 
+// WithAction sets the action for the task
+func (t *Task) WithAction(service string, method string, input interface{}) *Task {
+	t.Action = &Action{
+		Service: service,
+		Method:  method,
+		Input:   input,
+	}
+	return t
+}
+
+// WithInit adds an initialization parameter to the task
+func (t *Task) WithInit(name string, value interface{}) *Task {
+	if t.Init == nil {
+		t.Init = make(state.Parameters, 0)
+	}
+	t.Init.Add(name, value)
+	return t
+}
+
+// WithPost adds a post-execution parameter to the task
+func (t *Task) WithPost(name string, value interface{}) *Task {
+	if t.Post == nil {
+		t.Post = make(state.Parameters, 0)
+	}
+	t.Post.Add(name, value)
+	return t
+}
+
+// WithDependsOn adds a dependency to the task
+func (t *Task) WithDependsOn(taskID string) *Task {
+	if t.DependsOn == nil {
+		t.DependsOn = make([]string, 0)
+	}
+	t.DependsOn = append(t.DependsOn, taskID)
+	return t
+}
+
+// WithGoto adds a transition to the task
+func (t *Task) WithGoto(when string, taskName string) *Task {
+	if t.Goto == nil {
+		t.Goto = make([]*Transition, 0)
+	}
+	t.Goto = append(t.Goto, &Transition{
+		When: when,
+		Task: taskName,
+	})
+	return t
+}
+
+// WithAsync sets the task to run asynchronously
+func (t *Task) WithAsync(async bool) *Task {
+	t.Async = async
+	return t
+}
+
+// WithAutoPause sets the auto-pause flag for the task
+func (t *Task) WithAutoPause(autoPause bool) *Task {
+	t.AutoPause = &autoPause
+	return t
+}
+
+// AddSubTask adds a subtask to the task
+func (t *Task) AddSubTask(name string) *Task {
+	if t.Tasks == nil {
+		t.Tasks = make([]*Task, 0)
+	}
+
+	subtask := &Task{
+		ID:        t.ID + "/" + name,
+		Name:      name,
+		Namespace: name,
+	}
+
+	t.Tasks = append(t.Tasks, subtask)
+	return subtask
+}
+
+// CreateSubTask creates a subtask with the given properties and adds it to the task
+func (t *Task) CreateSubTask(name string, options ...func(*Task) *Task) *Task {
+	subtask := t.AddSubTask(name)
+
+	// Apply all the provided options to the subtask
+	for _, option := range options {
+		subtask = option(subtask)
+	}
+
+	return subtask
+}
+
 // Clone creates a deep copy of a task
 func (t *Task) Clone() *Task {
 	if t == nil {

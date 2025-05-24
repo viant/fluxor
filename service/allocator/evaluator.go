@@ -15,13 +15,13 @@ func evaluateCondition(condition string, process *execution.Process, task *graph
 		return defaultValue, nil
 	}
 
-	condition = strings.TrimPrefix(condition, "${")
-	condition = strings.TrimSuffix(condition, "}")
-
 	session := process.Session.Clone()
 	session.Set(task.Namespace, anExecution.Output)
 
 	evaluated := evaluator.Evaluate(condition, session.State)
+	if evaluated == nil {
+		return false, nil
+	}
 	switch actual := evaluated.(type) {
 	case bool:
 		return actual, nil
