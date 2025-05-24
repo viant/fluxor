@@ -8,7 +8,10 @@ import (
 	"github.com/viant/fluxor/service/event"
 	"github.com/viant/fluxor/service/messaging"
 	"github.com/viant/fluxor/service/meta"
+	"github.com/viant/fluxor/tracing"
 	"github.com/viant/x"
+
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // Service represents fluxor service
@@ -87,5 +90,23 @@ func WithMetaBaseURL(url string) Option {
 func WithMetaFsOptions(options ...storage.Option) Option {
 	return func(s *Service) {
 		s.metaFsOptions = options
+	}
+}
+
+// WithTracing configures OpenTelemetry tracing for the service. If outputFile is empty the
+// stdout exporter is used; otherwise traces are written to the supplied file path. The function is
+// safe to call multiple times – the first successful initialisation wins.
+func WithTracing(serviceName, serviceVersion, outputFile string) Option {
+	return func(s *Service) {
+		_ = tracing.Init(serviceName, serviceVersion, outputFile)
+	}
+}
+
+// WithTracingExporter configures OpenTelemetry tracing using a custom SpanExporter. This enables
+// integrations with exporters other than the built-in stdout exporter, for example OTLP, Jaeger or
+// Zipkin. The function is safe to call multiple times – the first successful initialisation wins.
+func WithTracingExporter(serviceName, serviceVersion string, exporter sdktrace.SpanExporter) Option {
+	return func(s *Service) {
+		_ = tracing.InitWithExporter(serviceName, serviceVersion, exporter)
 	}
 }

@@ -19,6 +19,7 @@ func TestService(t *testing.T) {
 	srv := fluxor.New(
 		fluxor.WithMetaFsOptions(&embedFS),
 		fluxor.WithMetaBaseURL("embed:///testdata"),
+		fluxor.WithTracing("fluxor", "0.0.1", "span.txt"),
 	)
 
 	runtime := srv.Runtime()
