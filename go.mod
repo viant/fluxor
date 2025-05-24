@@ -12,7 +12,7 @@ require (
 	github.com/viant/gosh v0.2.1
 	github.com/viant/parsly v0.3.3
 	github.com/viant/scy v0.20.0
-	github.com/viant/structology v0.7.0
+	github.com/viant/structology v0.7.1
 	github.com/viant/toolbox v0.36.0
 	github.com/viant/x v0.3.0
 	go.opentelemetry.io/otel v1.24.0
@@ -49,5 +49,3 @@ require (
 	golang.org/x/sys v0.33.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
-
-replace github.com/viant/structology => ../structology
