@@ -152,6 +152,11 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	// Create the process
 	aProcess = execution.NewProcess(processID, workflow.Name, workflow, init)
 
+	// If the incoming context contains a running parent process, record its ID
+	if parentProc := execution.ContextValue[*execution.Process](ctx); parentProc != nil {
+		aProcess.ParentID = parentProc.ID
+	}
+
 	// Apply initial state from workflow
 	if workflow.Init != nil {
 		aProcess.Session.ApplyParameters(workflow.Init)
@@ -236,7 +241,11 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 		return message.Nack(fmt.Errorf("process is paused"))
 	}
 
-	err = s.executor.Execute(ctx, anExecution, process)
+	// Ensure that the child execution receives information about the current process and execution
+	execCtx := context.WithValue(ctx, execution.ProcessKey, process)
+	execCtx = context.WithValue(execCtx, execution.ExecutionKey, anExecution)
+
+	err = s.executor.Execute(execCtx, anExecution, process)
 	if err != nil {
 		anExecution.Fail(err)
 		if daoErr := s.taskExecutionDao.Save(ctx, anExecution); daoErr != nil {

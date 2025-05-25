@@ -20,6 +20,7 @@ const (
 // Process represents a workflow execution instance
 type Process struct {
 	ID         string            `json:"id"`
+	ParentID   string            `json:"parentId,omitempty"`
 	SCN        int               `json:"scn"`
 	Name       string            `json:"name"`
 	State      string            `json:"state"`

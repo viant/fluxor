@@ -24,20 +24,28 @@ import (
 // therefore pass a plain function literal when customising the executor.
 type Listener func(task *graph.Task, input, output interface{})
 
-// defaultListener replicates the debug prints that were hard-coded in the previous implementation.
+// StdoutListener replicates the debug prints that were hard-coded in the previous implementation.
 // It serialises the task specification, input and output into JSON and prints them to standard
 // output. Errors from json.Marshal are ignored on purpose – they indicate non-serialisable values
 // and the caller would not have had access to the data either way in the original implementation.
-func defaultListener(task *graph.Task, input, output interface{}) {
+func StdoutListener(task *graph.Task, input, output interface{}) {
 	if task == nil {
 		return
 	}
 	tt, _ := json.Marshal(task)
-	in, _ := json.Marshal(input)
-	out, _ := json.Marshal(output)
 	fmt.Println(string(tt))
-	fmt.Println(string(in))
-	fmt.Println(string(out))
+	if task.Action == nil {
+		return
+	}
+	if input != nil {
+		in, _ := json.Marshal(input)
+		fmt.Println(string(in))
+	}
+
+	if output != nil {
+		out, _ := json.Marshal(output)
+		fmt.Println(string(out))
+	}
 }
 
 // Option is used to customise the executor instance.
@@ -166,7 +174,7 @@ func NewService(actions *extension.Actions, opts ...Option) Service {
 	s := &service{
 		actions:   actions,
 		converter: conv.NewConverter(options),
-		listener:  defaultListener,
+		listener:  StdoutListener,
 	}
 
 	for _, o := range opts {

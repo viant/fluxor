@@ -3,10 +3,15 @@ package processor
 import (
 	"context"
 	"github.com/stretchr/testify/assert"
+	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/model/state"
+	"github.com/viant/fluxor/service/action/printer"
+	execMemory "github.com/viant/fluxor/service/dao/execution/memory"
+	processMemory "github.com/viant/fluxor/service/dao/process/memory"
+	"github.com/viant/fluxor/service/executor"
 	"github.com/viant/fluxor/service/messaging/memory"
 	"testing"
 	"time"
@@ -57,11 +62,36 @@ func TestService_StartProcess(t *testing.T) {
 			// Create executor service with memory queue
 			queue := memory.NewQueue[execution.Execution](memory.DefaultConfig())
 
-			executor, err := New(WithMessageQueue(queue), WithWorkers(1))
-			assert.Nil(t, err)
-			// Start the process
+			// Create memory DAOs
+			processDAO := processMemory.New()
+			executionDAO := execMemory.New()
+
+			// Create actions registry and register printer service
+			actions := extension.NewActions()
+			actions.Register(printer.New())
+
+			// Create executor service
+			execService := executor.NewService(actions)
+
+			// Create context
 			ctx := context.Background()
-			process, err := executor.StartProcess(ctx, workflow, map[string]interface{}{}, tc.customTasks...)
+
+			// Create processor service with all required dependencies
+			processor, err := New(
+				WithMessageQueue(queue),
+				WithWorkers(1),
+				WithProcessDAO(processDAO),
+				WithTaskExecutionDAO(executionDAO),
+				WithExecutor(execService),
+			)
+			assert.Nil(t, err)
+
+			// Start the processor service
+			err = processor.Start(ctx)
+			assert.NoError(t, err)
+
+			// Start the process
+			process, err := processor.StartProcess(ctx, workflow, map[string]interface{}{}, tc.customTasks...)
 
 			if tc.expectErr {
 				assert.Error(t, err)
@@ -76,21 +106,21 @@ func TestService_StartProcess(t *testing.T) {
 			time.Sleep(100 * time.Millisecond)
 
 			// Test process management functions
-			err = executor.PauseProcess(ctx, process.ID)
+			err = processor.PauseProcess(ctx, process.ID)
 			assert.NoError(t, err)
 			assert.Equal(t, execution.StatePaused, process.GetState())
 
-			err = executor.ResumeProcess(ctx, process.ID)
+			err = processor.ResumeProcess(ctx, process.ID)
 			assert.NoError(t, err)
 			assert.Equal(t, execution.StateRunning, process.GetState())
 
 			// Check process retrieval
-			retrieved, err := executor.GetProcess(ctx, process.ID)
+			retrieved, err := processor.GetProcess(ctx, process.ID)
 			assert.NoError(t, err)
 			assert.Equal(t, process.ID, retrieved.ID)
 
 			// Cleanup
-			executor.Shutdown()
+			processor.Shutdown()
 		})
 	}
 }
