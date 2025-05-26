@@ -2,15 +2,15 @@ package allocator
 
 import (
 	"fmt"
-	"github.com/viant/fluxor/model/evaluator"
-	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/graph"
+	"github.com/viant/fluxor/runtime/evaluator"
+	execution2 "github.com/viant/fluxor/runtime/execution"
 	"strings"
 )
 
 // evaluateCondition evaluates a simple condition string
 // This is a placeholder for a more sophisticated condition evaluator
-func evaluateCondition(condition string, process *execution.Process, task *graph.Task, anExecution *execution.Execution, defaultValue bool) (bool, error) {
+func evaluateCondition(condition string, process *execution2.Process, task *graph.Task, anExecution *execution2.Execution, defaultValue bool) (bool, error) {
 	if condition == "" {
 		return defaultValue, nil
 	}

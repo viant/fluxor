@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/viant/fluxor/model"
-	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/graph"
+	execution2 "github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/executor"
 	"github.com/viant/fluxor/service/messaging"
@@ -43,10 +43,10 @@ func DefaultConfig() Config {
 // Service handles workflow execution
 type Service struct {
 	config           Config
-	processDAO       dao.Service[string, execution.Process]
-	taskExecutionDao dao.Service[string, execution.Execution]
+	processDAO       dao.Service[string, execution2.Process]
+	taskExecutionDao dao.Service[string, execution2.Execution]
 
-	queue    messaging.Queue[execution.Execution]
+	queue    messaging.Queue[execution2.Execution]
 	executor executor.Service
 
 	// Track active executions
@@ -193,7 +193,7 @@ func (w *worker) run() {
 }
 
 // StartProcess begins execution of a workflow
-func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, init map[string]interface{}, customTasks ...string) (aProcess *execution.Process, err error) {
+func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, init map[string]interface{}, customTasks ...string) (aProcess *execution2.Process, err error) {
 	// start tracing span for process start
 	ctx, span := tracing.StartSpan(ctx, fmt.Sprintf("processor.StartProcess %s", workflow.Name), "INTERNAL")
 	defer tracing.EndSpan(span, err)
@@ -208,7 +208,7 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	span.WithAttributes(map[string]string{"process.id": processID})
 
 	// Create the process
-	aProcess = execution.NewProcess(processID, workflow.Name, workflow, init)
+	aProcess = execution2.NewProcess(processID, workflow.Name, workflow, init)
 
 	// Start a parent tracing span covering the whole process lifetime
 	ctx, procSpan := tracing.StartSpan(ctx, fmt.Sprintf("process.run %s", workflow.Name), "INTERNAL")
@@ -216,7 +216,7 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	aProcess.Span = procSpan
 
 	// If the incoming context contains a running parent process, record its ID
-	if parentProc := execution.ContextValue[*execution.Process](ctx); parentProc != nil {
+	if parentProc := execution2.ContextValue[*execution2.Process](ctx); parentProc != nil {
 		aProcess.ParentID = parentProc.ID
 	}
 
@@ -224,11 +224,11 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	if workflow.Init != nil {
 		aProcess.Session.ApplyParameters(workflow.Init)
 	}
-	anExecution := execution.NewExecution(processID, nil, workflow.Pipeline)
+	anExecution := execution2.NewExecution(processID, nil, workflow.Pipeline)
 	aProcess.Push(anExecution)
 
 	// Set aProcess state to running
-	aProcess.SetState(execution.StateRunning)
+	aProcess.SetState(execution2.StateRunning)
 
 	if err = s.processDAO.Save(ctx, aProcess); err != nil {
 		err = fmt.Errorf("failed to save process: %w", err)
@@ -239,7 +239,7 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 }
 
 // GetProcess retrieves a process by ID
-func (s *Service) GetProcess(ctx context.Context, processID string) (*execution.Process, error) {
+func (s *Service) GetProcess(ctx context.Context, processID string) (*execution2.Process, error) {
 	return s.processDAO.Load(ctx, processID)
 }
 
@@ -253,12 +253,12 @@ func (s *Service) PauseProcess(ctx context.Context, processID string) error {
 		return fmt.Errorf("process %s not found", processID)
 	}
 
-	if process.GetState() != execution.StateRunning {
+	if process.GetState() != execution2.StateRunning {
 		return fmt.Errorf("process %s is not in running state", processID)
 	}
 
 	// Update the process state to paused
-	process.SetState(execution.StatePaused)
+	process.SetState(execution2.StatePaused)
 	return s.processDAO.Save(ctx, process)
 }
 
@@ -272,18 +272,18 @@ func (s *Service) ResumeProcess(ctx context.Context, processID string) error {
 		return fmt.Errorf("process %s not found", processID)
 	}
 
-	if process.GetState() != execution.StatePaused {
+	if process.GetState() != execution2.StatePaused {
 		return fmt.Errorf("process %s is not in paused state", processID)
 	}
 
 	// Update the process state to running
-	process.SetState(execution.StateRunning)
+	process.SetState(execution2.StateRunning)
 	return s.processDAO.Save(ctx, process)
 	// Let the allocator schedule next tasks
 }
 
 // processMessage handles a single task execution message
-func (s *Service) processMessage(ctx context.Context, message messaging.Message[execution.Execution]) (err error) {
+func (s *Service) processMessage(ctx context.Context, message messaging.Message[execution2.Execution]) (err error) {
 	anExecution := message.T()
 
 	// Start the execution
@@ -299,14 +299,14 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 	}
 
 	// Check if process is paused - if so, requeue the message for later processing
-	if process.GetState() == execution.StatePaused {
+	if process.GetState() == execution2.StatePaused {
 		// Don't mark as failed, just requeue with a delay
 		return message.Nack(fmt.Errorf("process is paused"))
 	}
 
 	// Ensure that the child execution receives information about the current process and execution
-	execCtx := context.WithValue(ctx, execution.ProcessKey, process)
-	execCtx = context.WithValue(execCtx, execution.ExecutionKey, anExecution)
+	execCtx := context.WithValue(ctx, execution2.ProcessKey, process)
+	execCtx = context.WithValue(execCtx, execution2.ExecutionKey, anExecution)
 
 	err = s.executor.Execute(execCtx, anExecution, process)
 	if err != nil {
@@ -318,12 +318,12 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 		shouldRetry, delay := s.shouldRetry(retryCfg, anExecution.Attempts)
 		if shouldRetry {
 			anExecution.Attempts++
-			anExecution.State = execution.TaskStatePending
+			anExecution.State = execution2.TaskStatePending
 			if daoErr := s.taskExecutionDao.Save(ctx, anExecution); daoErr != nil {
 				return message.Nack(fmt.Errorf("error %w and failed to save execution: %v", err, daoErr))
 			}
 			// Schedule manual retry after computed delay
-			go func(execCopy *execution.Execution, d time.Duration) {
+			go func(execCopy *execution2.Execution, d time.Duration) {
 				time.Sleep(d)
 				_ = s.queue.Publish(context.Background(), execCopy)
 			}(anExecution.Clone(), delay)

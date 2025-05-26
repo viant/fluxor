@@ -2,7 +2,7 @@ package memory
 
 import (
 	"context"
-	"github.com/viant/fluxor/model/execution"
+	"github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/dao/criteria"
 	"sync"

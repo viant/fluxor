@@ -2,7 +2,7 @@ package expander
 
 import (
 	"fmt"
-	"github.com/viant/fluxor/model/evaluator"
+	"github.com/viant/fluxor/runtime/evaluator"
 	"github.com/viant/structology/visitor"
 	"reflect"
 	"regexp"

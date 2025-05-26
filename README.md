@@ -318,6 +318,12 @@ pipeline:
 
 In this example, `processOrders` will spawn one `processOne` task for each element in `orders`, binding the current element to `$order` in each task.
 
+⚠️  Runtime validation: at the moment the selector expression is expanded the
+resolved value **must** be a slice or array. If it evaluates to any other
+type (string, map, scalar, nil, …) Fluxor fails the task with an explicit
+error message and the workflow moves to its normal failure path (or retries
+if a retry-strategy is defined).
+
 
 ## Optional Task Approval & Policy Layer
 

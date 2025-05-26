@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/viant/fluxor/runtime/execution"
 
 	"github.com/viant/afs"
 	"github.com/viant/afs/file"
 	"github.com/viant/afs/url"
 	"github.com/viant/fluxor/model"
-	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/types"
 	"github.com/viant/fluxor/tracing"
 )

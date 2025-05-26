@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	execution2 "github.com/viant/fluxor/runtime/execution"
 	"log"
 	"sync"
 
-	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/policy"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/messaging"
@@ -24,9 +24,9 @@ import (
 // graceful shutdown via Shutdown().
 type Service struct {
 	reqQueue  messaging.Queue[Request]
-	workQueue messaging.Queue[execution.Execution]
+	workQueue messaging.Queue[execution2.Execution]
 
-	execDAO dao.Service[string, execution.Execution]
+	execDAO dao.Service[string, execution2.Execution]
 
 	askFn policy.AskFunc
 
@@ -35,7 +35,7 @@ type Service struct {
 }
 
 // NewService constructs the approval service.  ask must not be nil.
-func NewService(reqQ messaging.Queue[Request], workQ messaging.Queue[execution.Execution], dao dao.Service[string, execution.Execution], ask policy.AskFunc) *Service {
+func NewService(reqQ messaging.Queue[Request], workQ messaging.Queue[execution2.Execution], dao dao.Service[string, execution2.Execution], ask policy.AskFunc) *Service {
 	return &Service{
 		reqQueue:  reqQ,
 		workQueue: workQ,
@@ -127,9 +127,9 @@ func (s *Service) handle(ctx context.Context, msg messaging.Message[Request]) {
 
 	exec.Approved = &approved
 	if approved {
-		exec.State = execution.TaskStatePending
+		exec.State = execution2.TaskStatePending
 	} else {
-		exec.State = execution.TaskStateFailed
+		exec.State = execution2.TaskStateFailed
 	}
 
 	if err = s.execDAO.Save(ctx, exec); err != nil {

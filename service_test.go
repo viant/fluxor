@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	_ "github.com/viant/afs/embed"
 	"github.com/viant/fluxor"
-	"github.com/viant/fluxor/model/execution"
+	"github.com/viant/fluxor/runtime/execution"
 	"testing"
 	"time"
 )

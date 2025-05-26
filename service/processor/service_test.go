@@ -5,9 +5,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model"
-	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/model/state"
+	execution2 "github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/action/printer"
 	execMemory "github.com/viant/fluxor/service/dao/execution/memory"
 	processMemory "github.com/viant/fluxor/service/dao/process/memory"
@@ -60,7 +60,7 @@ func TestService_StartProcess(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create executor service with memory queue
-			queue := memory.NewQueue[execution.Execution](memory.DefaultConfig())
+			queue := memory.NewQueue[execution2.Execution](memory.DefaultConfig())
 
 			// Create memory DAOs
 			processDAO := processMemory.New()
@@ -100,7 +100,7 @@ func TestService_StartProcess(t *testing.T) {
 
 			assert.NoError(t, err)
 			assert.NotNil(t, process)
-			assert.Equal(t, execution.StateRunning, process.GetState())
+			assert.Equal(t, execution2.StateRunning, process.GetState())
 
 			// Allow some time for tasks to be processed
 			time.Sleep(100 * time.Millisecond)
@@ -108,11 +108,11 @@ func TestService_StartProcess(t *testing.T) {
 			// Test process management functions
 			err = processor.PauseProcess(ctx, process.ID)
 			assert.NoError(t, err)
-			assert.Equal(t, execution.StatePaused, process.GetState())
+			assert.Equal(t, execution2.StatePaused, process.GetState())
 
 			err = processor.ResumeProcess(ctx, process.ID)
 			assert.NoError(t, err)
-			assert.Equal(t, execution.StateRunning, process.GetState())
+			assert.Equal(t, execution2.StateRunning, process.GetState())
 
 			// Check process retrieval
 			retrieved, err := processor.GetProcess(ctx, process.ID)

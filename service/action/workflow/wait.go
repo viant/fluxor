@@ -3,8 +3,8 @@ package workflow
 import (
 	"context"
 	"fmt"
-	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/types"
+	"github.com/viant/fluxor/runtime/execution"
 	"time"
 )
 

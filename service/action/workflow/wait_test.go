@@ -2,11 +2,11 @@ package workflow
 
 import (
 	"context"
+	"github.com/viant/fluxor/runtime/execution"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/viant/fluxor/model/execution"
 	processdao "github.com/viant/fluxor/service/dao/process/memory"
 )
 

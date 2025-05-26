@@ -4,15 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/viant/fluxor/model/execution"
-	"github.com/viant/fluxor/model/expander"
 	"github.com/viant/fluxor/model/graph"
+	execution2 "github.com/viant/fluxor/runtime/execution"
+	"github.com/viant/fluxor/runtime/expander"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/event"
 	"github.com/viant/fluxor/service/messaging"
 	"github.com/viant/fluxor/tracing"
 	"log"
-	"r
 	"reflect"
 	"strings"
 	"time"
@@ -70,14 +69,14 @@ func DefaultConfig() Config {
 // Service allocates tasks to processes
 type Service struct {
 	config           Config
-	processDAO       dao.Service[string, execution.Process]
-	taskExecutionDao dao.Service[string, execution.Execution]
-	queue            messaging.Queue[execution.Execution]
+	processDAO       dao.Service[string, execution2.Process]
+	taskExecutionDao dao.Service[string, execution2.Execution]
+	queue            messaging.Queue[execution2.Execution]
 	shutdownCh       chan struct{}
 }
 
 // New creates a new allocator service
-func New(processDAO dao.Service[string, execution.Process], taskExecutionDao dao.Service[string, execution.Execution], queue messaging.Queue[execution.Execution], config Config) *Service {
+func New(processDAO dao.Service[string, execution2.Process], taskExecutionDao dao.Service[string, execution2.Execution], queue messaging.Queue[execution2.Execution], config Config) *Service {
 	return &Service{
 		config:           config,
 		processDAO:       processDAO,
@@ -116,7 +115,7 @@ func (s *Service) handleTransition(ctx context.Context, processID string, fromTa
 	allTasks := aProcess.Workflow.AllTasks()
 	parentTask := allTasks[fromTaskID]
 	nextTask := allTasks[toTaskID]
-	nextExecution := execution.NewExecution(processID, parentTask, nextTask)
+	nextExecution := execution2.NewExecution(processID, parentTask, nextTask)
 	aProcess.Push(nextExecution)
 	// Save the process with the updated plan
 	return s.processDAO.Save(ctx, aProcess)
@@ -126,7 +125,7 @@ func (s *Service) handleTransition(ctx context.Context, processID string, fromTa
 // allocateTasks finds processes that need tasks and allocates them
 func (s *Service) allocateTasks(ctx context.Context) error {
 	// Get all processes
-	processes, err := s.processDAO.List(ctx, dao.NewParameter("State", execution.StatePending, execution.StateRunning))
+	processes, err := s.processDAO.List(ctx, dao.NewParameter("State", execution2.StatePending, execution2.StateRunning))
 	if err != nil {
 		return fmt.Errorf("failed to list processes: %w", err)
 	}
@@ -134,7 +133,7 @@ func (s *Service) allocateTasks(ctx context.Context) error {
 	// Process each running workflow
 	for _, process := range processes {
 		// Skip processes that aren't running
-		if process.GetState() != execution.StateRunning {
+		if process.GetState() != execution2.StateRunning {
 			continue
 		}
 
@@ -150,22 +149,22 @@ func (s *Service) allocateTasks(ctx context.Context) error {
 }
 
 // scheduleNextTasks allocates the next ready tasks for a process
-func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Process) error {
+func (s *Service) scheduleNextTasks(ctx context.Context, process *execution2.Process) error {
 	// Skip if process has reached max concurrent tasks
 
 	// Check if there are tasks on the stack to execute
 	if len(process.Stack) == 0 {
 		// No more tasks to execute, check if process is complete
-		if process.GetState() == execution.StateRunning {
+		if process.GetState() == execution2.StateRunning {
 			if len(process.Errors) > 0 {
-				process.SetState(execution.StateFailed)
+				process.SetState(execution2.StateFailed)
 			} else {
-				process.SetState(execution.StateCompleted)
+				process.SetState(execution2.StateCompleted)
 			}
 			// End process-level span if present
 			if process.Span != nil {
 				var endErr error
-				if process.GetState() == execution.StateFailed {
+				if process.GetState() == execution2.StateFailed {
 					endErr = fmt.Errorf("process failed with %d errors", len(process.Errors))
 				}
 				tracing.EndSpan(process.Span, endErr)
@@ -181,7 +180,7 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 	var err error
 	currentTask := process.LookupTask(anExecution.TaskID)
 	switch anExecution.State {
-	case execution.TaskStatePending:
+	case execution2.TaskStatePending:
 		done, err := s.handlePendingTask(ctx, process, currentTask, anExecution)
 		if err != nil {
 			return s.handleExecutionError(ctx, process, anExecution, err)
@@ -190,7 +189,7 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 		if done {
 			return nil
 		}
-	case execution.TaskStateRunning, execution.TaskStateScheduled, execution.TaskStatePaused:
+	case execution2.TaskStateRunning, execution2.TaskStateScheduled, execution2.TaskStatePaused:
 		scheduleSubTasks, err := s.handleRunningTask(ctx, process, anExecution)
 		if !scheduleSubTasks || err != nil {
 			return err
@@ -198,19 +197,19 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 	}
 
 	dependencyState, err := s.ensureDependencies(ctx, process, anExecution)
-	if err != nil || dependencyState == execution.TaskStateRunning {
+	if err != nil || dependencyState == execution2.TaskStateRunning {
 		return err
 	}
 
 	switch dependencyState {
-	case execution.TaskStateFailed:
+	case execution2.TaskStateFailed:
 		return s.handleProcessedExecution(ctx, process, anExecution, dependencyState)
 	}
 
 	switch anExecution.State {
-	case execution.TaskStateWaitForDependencies, execution.TaskStatePending:
+	case execution2.TaskStateWaitForDependencies, execution2.TaskStatePending:
 		if currentTask.Action != nil {
-			if err := s.updateExecutionState(ctx, process, anExecution, execution.TaskStateScheduled); err != nil {
+			if err := s.updateExecutionState(ctx, process, anExecution, execution2.TaskStateScheduled); err != nil {
 				return fmt.Errorf("failed to update execution state: %w", err)
 			}
 			return nil
@@ -222,14 +221,14 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 		return err
 	}
 	switch status {
-	case execution.TaskStateRunning:
+	case execution2.TaskStateRunning:
 		return nil
 	default:
 		return s.handleProcessedExecution(ctx, process, anExecution, status)
 	}
 }
 
-func (s *Service) handlePendingTask(ctx context.Context, process *execution.Process, currentTask *graph.Task, anExecution *execution.Execution) (bool, error) {
+func (s *Service) handlePendingTask(ctx context.Context, process *execution2.Process, currentTask *graph.Task, anExecution *execution2.Execution) (bool, error) {
 	var err error
 	// Evaluate conditional execution
 	if currentTask.When != "" {
@@ -267,7 +266,7 @@ func (s *Service) handlePendingTask(ctx context.Context, process *execution.Proc
 			// Assign a unique ID for the clone
 			clone.ID = fmt.Sprintf("%s[%d]", currentTask.ID, idx)
 			// Prepare execution with element-bound data
-			exec := execution.NewExecution(process.ID, currentTask, clone)
+			exec := execution2.NewExecution(process.ID, currentTask, clone)
 			exec.Data = make(map[string]interface{})
 			// Bind selector parameters: first => element, others => index or expanded
 			for si, param := range *selParams {
@@ -289,7 +288,7 @@ func (s *Service) handlePendingTask(ctx context.Context, process *execution.Proc
 			addDynamicTask(allTasks, clone)
 		}
 		// Mark the driver task as waiting for subtasks
-		if err := s.updateExecutionState(ctx, process, anExecution, execution.TaskStateWaitForSubTasks); err != nil {
+		if err := s.updateExecutionState(ctx, process, anExecution, execution2.TaskStateWaitForSubTasks); err != nil {
 			return true, err
 		}
 		return true, nil
@@ -311,7 +310,7 @@ func (s *Service) handlePendingTask(ctx context.Context, process *execution.Proc
 	return false, err
 }
 
-func (s *Service) handleRunningTask(ctx context.Context, process *execution.Process, anExecution *execution.Execution) (bool, error) {
+func (s *Service) handleRunningTask(ctx context.Context, process *execution2.Process, anExecution *execution2.Execution) (bool, error) {
 	runningExecution, err := s.taskExecutionDao.Load(ctx, anExecution.ID)
 	if err != nil {
 		return false, fmt.Errorf("failed to load running execution: %w", err)
@@ -321,50 +320,50 @@ func (s *Service) handleRunningTask(ctx context.Context, process *execution.Proc
 	}
 	anExecution.Merge(runningExecution)
 	switch runningExecution.State {
-	case execution.TaskStateRunning, execution.TaskStatePaused:
+	case execution2.TaskStateRunning, execution2.TaskStatePaused:
 		return false, nil
-	case execution.TaskStateCompleted:
-	case execution.TaskStateFailed, execution.TaskStateSkipped:
+	case execution2.TaskStateCompleted:
+	case execution2.TaskStateFailed, execution2.TaskStateSkipped:
 		return false, s.handleProcessedExecution(ctx, process, anExecution, runningExecution.State)
 	}
 	return true, nil
 }
 
-func (s *Service) ensureDependencies(ctx context.Context, process *execution.Process, anExecution *execution.Execution) (execution.TaskState, error) {
+func (s *Service) ensureDependencies(ctx context.Context, process *execution2.Process, anExecution *execution2.Execution) (execution2.TaskState, error) {
 	completed := 0
 	currentTask := process.LookupTask(anExecution.TaskID)
 
-	var scheduled []*execution.Execution
+	var scheduled []*execution2.Execution
 	// Check if all dependencies are satisfied
 outer:
 	for _, depID := range anExecution.DependsOn {
 		task := process.LookupTask(depID)
 		status := anExecution.Dependencies[task.ID]
 		switch status {
-		case execution.TaskStatePending:
-			scheduled = append(scheduled, execution.NewExecution(process.ID, currentTask, task))
-			anExecution.Dependencies[task.ID] = execution.TaskStateScheduled
+		case execution2.TaskStatePending:
+			scheduled = append(scheduled, execution2.NewExecution(process.ID, currentTask, task))
+			anExecution.Dependencies[task.ID] = execution2.TaskStateScheduled
 			break outer
-		case execution.TaskStateCompleted, execution.TaskStateSkipped:
+		case execution2.TaskStateCompleted, execution2.TaskStateSkipped:
 			completed++
-		case execution.TaskStateFailed:
-			return execution.TaskStateFailed, nil
+		case execution2.TaskStateFailed:
+			return execution2.TaskStateFailed, nil
 		}
 	}
 	if len(scheduled) > 0 {
 		process.Push(scheduled...)
-		if err := s.updateExecutionState(ctx, process, anExecution, execution.TaskStateWaitForDependencies); err != nil {
-			return execution.TaskStateFailed, fmt.Errorf("failed to update execution state: %w", err)
+		if err := s.updateExecutionState(ctx, process, anExecution, execution2.TaskStateWaitForDependencies); err != nil {
+			return execution2.TaskStateFailed, fmt.Errorf("failed to update execution state: %w", err)
 		}
 	}
 	dependenciesMet := len(anExecution.DependsOn) == completed
 	if dependenciesMet {
-		return execution.StateCompleted, nil
+		return execution2.StateCompleted, nil
 	}
-	return execution.StateRunning, nil
+	return execution2.StateRunning, nil
 }
 
-func (s *Service) ensureSubTasks(ctx context.Context, process *execution.Process, anExecution *execution.Execution) (execution.TaskState, error) {
+func (s *Service) ensureSubTasks(ctx context.Context, process *execution2.Process, anExecution *execution2.Execution) (execution2.TaskState, error) {
 	completed := 0
 	currentTask := process.LookupTask(anExecution.TaskID)
 
@@ -376,40 +375,40 @@ func (s *Service) ensureSubTasks(ctx context.Context, process *execution.Process
 		}
 	}
 
-	var scheduled []*execution.Execution
+	var scheduled []*execution2.Execution
 	// Check if all dependencies are satisfied
 outer:
 	for i := range currentTask.Tasks {
 		task := currentTask.Tasks[i]
 		status := anExecution.Dependencies[task.ID]
 		switch status {
-		case execution.TaskStatePending:
-			scheduled = append(scheduled, execution.NewExecution(process.ID, currentTask, task))
-			anExecution.Dependencies[task.ID] = execution.TaskStateScheduled
+		case execution2.TaskStatePending:
+			scheduled = append(scheduled, execution2.NewExecution(process.ID, currentTask, task))
+			anExecution.Dependencies[task.ID] = execution2.TaskStateScheduled
 			if !async {
 				break outer
 			}
-		case execution.TaskStateFailed:
-			return execution.TaskStateFailed, nil
-		case execution.TaskStateCompleted, execution.TaskStateSkipped:
+		case execution2.TaskStateFailed:
+			return execution2.TaskStateFailed, nil
+		case execution2.TaskStateCompleted, execution2.TaskStateSkipped:
 			completed++
 		}
 	}
 	if len(scheduled) > 0 {
 		process.Push(scheduled...)
-		if err := s.updateExecutionState(ctx, process, anExecution, execution.TaskStateWaitForSubTasks); err != nil {
-			return execution.TaskStateFailed, fmt.Errorf("failed to update execution state: %w", err)
+		if err := s.updateExecutionState(ctx, process, anExecution, execution2.TaskStateWaitForSubTasks); err != nil {
+			return execution2.TaskStateFailed, fmt.Errorf("failed to update execution state: %w", err)
 		}
 	}
 	subTaskCompleted := len(currentTask.Tasks) == completed
 	if subTaskCompleted {
-		return execution.TaskStateCompleted, nil
+		return execution2.TaskStateCompleted, nil
 	}
-	return execution.TaskStateRunning, nil
+	return execution2.TaskStateRunning, nil
 }
 
-func (s *Service) updateExecutionState(ctx context.Context, process *execution.Process, anExecution *execution.Execution, state execution.TaskState) error {
-	if state == execution.TaskStateScheduled {
+func (s *Service) updateExecutionState(ctx context.Context, process *execution2.Process, anExecution *execution2.Execution, state execution2.TaskState) error {
+	if state == execution2.TaskStateScheduled {
 		anExecution.Schedule()
 	}
 	anExecution.State = state
@@ -421,7 +420,7 @@ func (s *Service) updateExecutionState(ctx context.Context, process *execution.P
 		return fmt.Errorf("failed to save process: %w", err)
 	}
 	switch state {
-	case execution.TaskStateScheduled:
+	case execution2.TaskStateScheduled:
 		if err = s.publishTaskExecution(ctx, process, anExecution); err != nil {
 			return fmt.Errorf("failed to publish task execution: %w", err)
 		}
@@ -429,13 +428,13 @@ func (s *Service) updateExecutionState(ctx context.Context, process *execution.P
 	return nil
 }
 
-func (s *Service) scheduleTask(ctx context.Context, process *execution.Process, parentTaskId, taskId string, anExecution *execution.Execution) *execution.Execution {
+func (s *Service) scheduleTask(ctx context.Context, process *execution2.Process, parentTaskId, taskId string, anExecution *execution2.Execution) *execution2.Execution {
 	parent := process.LookupTask(parentTaskId)
 	task := process.LookupTask(taskId)
 	status := anExecution.Dependencies[task.ID]
-	if status == execution.TaskStatePending {
-		depExecution := execution.NewExecution(process.ID, parent, task)
-		anExecution.Dependencies[task.ID] = execution.TaskStateScheduled
+	if status == execution2.TaskStatePending {
+		depExecution := execution2.NewExecution(process.ID, parent, task)
+		anExecution.Dependencies[task.ID] = execution2.TaskStateScheduled
 		process.Push(depExecution)
 		return depExecution
 	}
@@ -443,14 +442,14 @@ func (s *Service) scheduleTask(ctx context.Context, process *execution.Process, 
 }
 
 // publishTaskExecution creates and publishes an execution for a single task
-func (s *Service) publishTaskExecution(ctx context.Context, process *execution.Process, anExecution *execution.Execution) error {
-	if value := ctx.Value(execution.EventKey); value != nil {
+func (s *Service) publishTaskExecution(ctx context.Context, process *execution2.Process, anExecution *execution2.Execution) error {
+	if value := ctx.Value(execution2.EventKey); value != nil {
 		service := value.(*event.Service)
-		publisher, err := event.PublisherOf[*execution.Execution](service)
+		publisher, err := event.PublisherOf[*execution2.Execution](service)
 		if err == nil {
 			task := process.LookupTask(anExecution.TaskID)
 			eCtx := anExecution.Context("scheduled", task)
-			anEvent := event.NewEvent[*execution.Execution](eCtx, anExecution)
+			anEvent := event.NewEvent[*execution2.Execution](eCtx, anExecution)
 			if err = publisher.Publish(ctx, anEvent); err != nil {
 				log.Printf("failed to publish task execution event: %v", err)
 			}
@@ -472,7 +471,7 @@ func (s *Service) TaskCompleted(ctx context.Context, processID string, taskID st
 	anExecution := process.LookupExecution(taskID)
 	parentExecution := process.LookupExecution(anExecution.ParentTaskID)
 	if parentExecution != nil {
-		parentExecution.Dependencies[taskID] = execution.TaskStateCompleted
+		parentExecution.Dependencies[taskID] = execution2.TaskStateCompleted
 	}
 	// Save the updated process
 	if err := s.processDAO.Save(ctx, process); err != nil {
@@ -488,10 +487,10 @@ func (s *Service) Shutdown() {
 	close(s.shutdownCh)
 }
 
-func (s *Service) handleProcessedExecution(ctx context.Context, process *execution.Process, anExecution *execution.Execution, state execution.TaskState) error {
+func (s *Service) handleProcessedExecution(ctx context.Context, process *execution2.Process, anExecution *execution2.Execution, state execution2.TaskState) error {
 	currentTask := process.LookupTask(anExecution.TaskID)
 
-	if state == execution.TaskStateCompleted {
+	if state == execution2.TaskStateCompleted {
 		output := anExecution.Output
 		var outputMap = make(map[string]interface{})
 		if data, err := json.Marshal(anExecution.Output); err == nil {
@@ -524,7 +523,7 @@ func (s *Service) handleProcessedExecution(ctx context.Context, process *executi
 	return nil
 }
 
-func (s *Service) handleTaskDone(currentTask *graph.Task, process *execution.Process, anExecution *execution.Execution, outputMap map[string]interface{}) error {
+func (s *Service) handleTaskDone(currentTask *graph.Task, process *execution2.Process, anExecution *execution2.Execution, outputMap map[string]interface{}) error {
 
 	source := process.Session.Clone()
 	for k, v := range outputMap {
@@ -561,7 +560,7 @@ func (s *Service) handleTaskDone(currentTask *graph.Task, process *execution.Pro
 
 }
 
-func (s *Service) handleExecutionError(ctx context.Context, process *execution.Process, anExecution *execution.Execution, err error) error {
+func (s *Service) handleExecutionError(ctx context.Context, process *execution2.Process, anExecution *execution2.Execution, err error) error {
 	anExecution.Error += err.Error()
-	return s.handleProcessedExecution(ctx, process, anExecution, execution.TaskStateFailed)
+	return s.handleProcessedExecution(ctx, process, anExecution, execution2.TaskStateFailed)
 }

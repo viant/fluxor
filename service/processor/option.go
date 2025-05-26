@@ -1,7 +1,7 @@
 package processor
 
 import (
-	"github.com/viant/fluxor/model/execution"
+	execution2 "github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/executor"
 	"github.com/viant/fluxor/service/messaging"
@@ -11,20 +11,20 @@ import (
 type Option func(*Service)
 
 // WithProcessDAO sets the process store implementation
-func WithProcessDAO(processDAO dao.Service[string, execution.Process]) Option {
+func WithProcessDAO(processDAO dao.Service[string, execution2.Process]) Option {
 	return func(s *Service) {
 		s.processDAO = processDAO
 	}
 }
 
-func WithTaskExecutionDAO(taskExecutionDao dao.Service[string, execution.Execution]) Option {
+func WithTaskExecutionDAO(taskExecutionDao dao.Service[string, execution2.Execution]) Option {
 	return func(s *Service) {
 		s.taskExecutionDao = taskExecutionDao
 	}
 }
 
 // WithMessageQueue sets the message queue implementation
-func WithMessageQueue(queue messaging.Queue[execution.Execution]) Option {
+func WithMessageQueue(queue messaging.Queue[execution2.Execution]) Option {
 	return func(s *Service) {
 		s.queue = queue
 	}

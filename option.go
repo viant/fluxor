@@ -2,8 +2,8 @@ package fluxor
 
 import (
 	"github.com/viant/afs/storage"
-	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/types"
+	execution2 "github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/event"
 	"github.com/viant/fluxor/service/messaging"
@@ -45,7 +45,7 @@ func WithExtensionServices(services ...types.Service) Option {
 }
 
 // WithQueue sets the message queue
-func WithQueue(queue messaging.Queue[execution.Execution]) Option {
+func WithQueue(queue messaging.Queue[execution2.Execution]) Option {
 	return func(s *Service) {
 		s.queue = queue
 	}
@@ -59,14 +59,14 @@ func WithRootTaskNodeName(name string) Option {
 }
 
 // WithProcessDAO sets the processor DAO
-func WithProcessDAO(dao dao.Service[string, execution.Process]) Option {
+func WithProcessDAO(dao dao.Service[string, execution2.Process]) Option {
 	return func(s *Service) {
 		s.runtime.processorDAO = dao
 	}
 }
 
 // WithTaskExecutionDAO sets the task execution DAO
-func WithTaskExecutionDAO(dao dao.Service[string, execution.Execution]) Option {
+func WithTaskExecutionDAO(dao dao.Service[string, execution2.Execution]) Option {
 	return func(s *Service) {
 		s.runtime.taskExecutionDao = dao
 	}

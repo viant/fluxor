@@ -8,11 +8,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	execution2 "github.com/viant/fluxor/runtime/execution"
 	"log"
 	"time"
 
 	"github.com/viant/fluxor/extension"
-	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/service/event"
 	"github.com/viant/fluxor/tracing"
@@ -63,7 +63,7 @@ func WithListener(l Listener) Option {
 
 // Service represents a task executor.
 type Service interface {
-	Execute(ctx context.Context, execution *execution.Execution, process *execution.Process) error
+	Execute(ctx context.Context, execution *execution2.Execution, process *execution2.Process) error
 }
 
 // service is the concrete implementation of Service.
@@ -74,7 +74,7 @@ type service struct {
 }
 
 // Execute executes a task.
-func (s *service) Execute(ctx context.Context, anExecution *execution.Execution, process *execution.Process) error {
+func (s *service) Execute(ctx context.Context, anExecution *execution2.Execution, process *execution2.Process) error {
 	task := process.LookupTask(anExecution.TaskID)
 	if task == nil {
 		return ErrTaskNotFound
@@ -86,12 +86,12 @@ func (s *service) Execute(ctx context.Context, anExecution *execution.Execution,
 	}
 
 	// Publish execution event if an event service is attached to the context.
-	if value := ctx.Value(execution.EventKey); value != nil {
+	if value := ctx.Value(execution2.EventKey); value != nil {
 		service := value.(*event.Service)
-		publisher, err := event.PublisherOf[*execution.Execution](service)
+		publisher, err := event.PublisherOf[*execution2.Execution](service)
 		if err == nil {
 			eCtx := anExecution.Context("executed", task)
-			anEvent := event.NewEvent[*execution.Execution](eCtx, anExecution)
+			anEvent := event.NewEvent[*execution2.Execution](eCtx, anExecution)
 			if err = publisher.Publish(ctx, anEvent); err != nil {
 				log.Printf("failed to publish task execution event: %v", err)
 			}
@@ -101,7 +101,7 @@ func (s *service) Execute(ctx context.Context, anExecution *execution.Execution,
 	return nil
 }
 
-func (s *service) execute(ctx context.Context, anExecution *execution.Execution, process *execution.Process, task *graph.Task) error {
+func (s *service) execute(ctx context.Context, anExecution *execution2.Execution, process *execution2.Process, task *graph.Task) error {
 	action := task.Action
 	if action == nil {
 		// Nothing to execute.
@@ -148,9 +148,9 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 
 	// Prepare a task session.
 	session := process.Session.TaskSession(anExecution.Data,
-		execution.WithConverter(s.converter),
-		execution.WithImports(process.Workflow.Imports...),
-		execution.WithTypes(s.actions.Types()))
+		execution2.WithConverter(s.converter),
+		execution2.WithImports(process.Workflow.Imports...),
+		execution2.WithTypes(s.actions.Types()))
 
 	if err = session.ApplyParameters(task.Init); err != nil {
 		spanErr = err
