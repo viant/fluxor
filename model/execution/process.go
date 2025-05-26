@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/graph"
+	"github.com/viant/fluxor/tracing"
 	"sync"
 	"time"
 )
@@ -31,6 +32,7 @@ type Process struct {
 	Session    *Session          `json:"session"`
 	Stack      []*Execution      `json:"stack,omitempty"`
 	Errors     map[string]string `json:"errors,omitempty"`
+	Span       *tracing.Span     `json:"-"`
 	Mode       string            `json:"mode"` //debug
 	// For serverless environments
 	ActiveTaskCount  int                    `json:"activeTaskCount"`

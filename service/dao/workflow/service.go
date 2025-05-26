@@ -70,6 +70,10 @@ func (s *Service) ParseWorkflow(URL string, node *yaml.Node) (*model.Workflow, e
 	if workflow.Pipeline != nil {
 		assignTaskIDs(workflow.Pipeline, workflow.Name, "")
 	}
+
+	if issues := workflow.Validate(); len(issues) > 0 {
+		return nil, issues[0]
+	}
 	return workflow, nil
 }
 

@@ -147,6 +147,10 @@ func NewFromConfig(cfg *Config, opts ...Option) *Service {
 		cfg = DefaultConfig()
 	}
 
+	if err := cfg.Validate(); err != nil {
+		panic(err) // configuration error at startup is unrecoverable
+	}
+
 	ret := &Service{
 		runtime: &Runtime{},
 		config:  cfg,

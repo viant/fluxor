@@ -1,5 +1,7 @@
 package fluxor
 
+import "fmt"
+
 // Config is a serialisable representation of the engine configuration. It can
 // be populated from JSON, YAML, TOML, environment variables, etc. The
 // zero-value is useful – all nested fields inherit their package defaults.
@@ -22,4 +24,15 @@ func DefaultConfig() *Config {
 			WorkerCount: 1, // matches hard-coded value in Service.init previously
 		},
 	}
+}
+
+// Validate returns aggregated error describing invalid settings or nil.
+func (c *Config) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.Processor.WorkerCount <= 0 {
+		return fmt.Errorf("processor.workerCount must be > 0")
+	}
+	return nil
 }

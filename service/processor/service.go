@@ -210,6 +210,11 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	// Create the process
 	aProcess = execution.NewProcess(processID, workflow.Name, workflow, init)
 
+	// Start a parent tracing span covering the whole process lifetime
+	ctx, procSpan := tracing.StartSpan(ctx, fmt.Sprintf("process.run %s", workflow.Name), "INTERNAL")
+	procSpan.WithAttributes(map[string]string{"process.id": processID, "workflow.name": workflow.Name})
+	aProcess.Span = procSpan
+
 	// If the incoming context contains a running parent process, record its ID
 	if parentProc := execution.ContextValue[*execution.Process](ctx); parentProc != nil {
 		aProcess.ParentID = parentProc.ID

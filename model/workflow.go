@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/model/state"
 )
@@ -40,6 +41,140 @@ type Workflow struct {
 	Config map[string]interface{} `json:"config,omitempty" yaml:"config,omitempty"`
 
 	AutoPause *bool `json:"autoPause,omitempty" yaml:"autoPause,omitempty"`
+}
+
+// Validate performs a best-effort structural validation of the workflow.  The
+// returned slice is empty when the workflow is sound; otherwise it contains
+// human-readable error descriptions.  The function does NOT attempt to execute
+// any expressions – it only verifies static properties.
+func (w *Workflow) Validate() []error {
+	var issues []error
+
+	if w.Pipeline == nil {
+		issues = append(issues, fmt.Errorf("pipeline is nil"))
+		return issues
+	}
+
+	// collect all task IDs
+	seen := map[string]bool{}
+
+	var walk func(t *graph.Task)
+	walk = func(t *graph.Task) {
+		if t == nil {
+			return
+		}
+		if seen[t.ID] {
+			issues = append(issues, fmt.Errorf("duplicate task id %s", t.ID))
+		}
+		seen[t.ID] = true
+
+		// validate dependencies refer to existing tasks (so far)
+		for _, dep := range t.DependsOn {
+			if dep == t.ID {
+				issues = append(issues, fmt.Errorf("task %s depends on itself", t.ID))
+			}
+		}
+
+		for _, st := range t.Tasks {
+			walk(st)
+		}
+	}
+
+	walk(w.Pipeline)
+
+	// After collecting all tasks, verify each dependency / goto exists.
+	var check func(*graph.Task)
+	check = func(t *graph.Task) {
+		if t == nil {
+			return
+		}
+		for _, dep := range t.DependsOn {
+			if !seen[dep] {
+				issues = append(issues, fmt.Errorf("task %s depends on unknown task %s", t.ID, dep))
+			}
+		}
+		for _, g := range t.Goto {
+			if g != nil && g.Task != "" && !seen[g.Task] {
+				issues = append(issues, fmt.Errorf("task %s goto refers to unknown task %s", t.ID, g.Task))
+			}
+		}
+		for _, st := range t.Tasks {
+			check(st)
+		}
+	}
+
+	check(w.Pipeline)
+
+	// -----------------------------------------------------------------
+	// 3. Detect dependency cycles & unreachable tasks
+	// -----------------------------------------------------------------
+
+	// Build adjacency list (dependsOn and sub-task containment)
+	edges := map[string][]string{}
+	for id, t := range w.AllTasks() {
+		// dependsOn edges
+		edges[id] = append(edges[id], t.DependsOn...)
+		// structural parent → child edges already covered by traversal
+	}
+
+	// DFS with colour set (white/grey/black) to detect back-edge cycles
+	const (
+		white = 0
+		grey  = 1
+		black = 2
+	)
+	state := map[string]int{}
+
+	var dfs func(string) bool // returns true if cycle found
+	dfs = func(n string) bool {
+		st := state[n]
+		if st == grey {
+			return true // back-edge → cycle
+		}
+		if st == black {
+			return false
+		}
+		state[n] = grey
+		for _, nxt := range edges[n] {
+			if dfs(nxt) {
+				return true
+			}
+		}
+		state[n] = black
+		return false
+	}
+
+	if dfs(w.Pipeline.ID) {
+		issues = append(issues, fmt.Errorf("workflow contains cyclic dependencies"))
+	}
+
+	// Unreachable tasks = tasks that stay white after DFS from root
+	for id, col := range state {
+		if col == white {
+			issues = append(issues, fmt.Errorf("task %s is unreachable from pipeline", id))
+		}
+	}
+
+	// -----------------------------------------------------------------
+	// 4. Template selector sanity checks
+	// -----------------------------------------------------------------
+	var walkTpl func(*graph.Task)
+	walkTpl = func(t *graph.Task) {
+		if t == nil {
+			return
+		}
+		if tpl := t.Template; tpl != nil {
+			if tpl.Selector == nil || len(*tpl.Selector) == 0 {
+				issues = append(issues, fmt.Errorf("task %s has template without selector", t.ID))
+			}
+		}
+		for _, st := range t.Tasks {
+			walkTpl(st)
+		}
+	}
+	walkTpl(w.Pipeline)
+
+	return issues
 }
 
 // NewWorkflow creates a new workflow with the given name

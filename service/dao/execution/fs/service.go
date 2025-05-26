@@ -29,10 +29,10 @@ var _ dao.Service[string, execution.Execution] = (*Service)(nil)
 // Save persists a process to the filesystem
 func (s *Service) Save(ctx context.Context, execution *execution.Execution) error {
 	if execution == nil {
-		return fmt.Errorf("cannot save nil execution")
+		return dao.ErrNilEntity
 	}
 	if execution.ID == "" {
-		return fmt.Errorf("execution ID cannot be empty")
+		return dao.ErrInvalidID
 	}
 
 	s.mu.Lock()
@@ -68,7 +68,7 @@ func (s *Service) Load(ctx context.Context, id string) (*execution.Execution, er
 	}
 
 	if !exists {
-		return nil, fmt.Errorf("process not found: %s", id)
+		return nil, dao.ErrNotFound
 	}
 
 	data, err := s.fs.DownloadWithURL(ctx, filePath)
@@ -100,7 +100,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	}
 
 	if !exists {
-		return fmt.Errorf("process not found: %s", id)
+		return dao.ErrNotFound
 	}
 
 	if err := s.fs.Delete(ctx, filePath); err != nil {

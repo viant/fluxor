@@ -2,6 +2,7 @@ package execution
 
 import (
 	"fmt"
+	"github.com/viant/fluxor/internal/idgen"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/service/event"
 	"time"
@@ -157,7 +158,7 @@ func (e *Execution) Skip() {
 
 // generateExecutionID creates a unique ID for an execution
 func generateExecutionID(processID, taskID string) string {
-	return fmt.Sprintf("%s-%s-%d", processID, taskID, time.Now().UnixNano())
+	return fmt.Sprintf("%s-%s-%s", processID, taskID, idgen.New())
 }
 
 // Clone creates a deep copy of the execution so that the caller can mutate it

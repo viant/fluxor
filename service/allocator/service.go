@@ -10,7 +10,9 @@ import (
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/event"
 	"github.com/viant/fluxor/service/messaging"
+	"github.com/viant/fluxor/tracing"
 	"log"
+	"r
 	"reflect"
 	"strings"
 	"time"
@@ -159,6 +161,15 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 				process.SetState(execution.StateFailed)
 			} else {
 				process.SetState(execution.StateCompleted)
+			}
+			// End process-level span if present
+			if process.Span != nil {
+				var endErr error
+				if process.GetState() == execution.StateFailed {
+					endErr = fmt.Errorf("process failed with %d errors", len(process.Errors))
+				}
+				tracing.EndSpan(process.Span, endErr)
+				process.Span = nil
 			}
 			return s.processDAO.Save(ctx, process)
 		}

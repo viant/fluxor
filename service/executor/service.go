@@ -77,7 +77,7 @@ type service struct {
 func (s *service) Execute(ctx context.Context, anExecution *execution.Execution, process *execution.Process) error {
 	task := process.LookupTask(anExecution.TaskID)
 	if task == nil {
-		return fmt.Errorf("task %s not found in workflow", anExecution.TaskID)
+		return ErrTaskNotFound
 	}
 
 	// Execute the task action if defined.
@@ -136,7 +136,7 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 		return spanErr
 	}
 	if action.Method == "" {
-		spanErr = fmt.Errorf("method not found for service %v", action.Service)
+		spanErr = ErrMethodNotFound
 		return spanErr
 	}
 
