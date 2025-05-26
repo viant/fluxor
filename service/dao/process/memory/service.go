@@ -2,87 +2,84 @@ package memory
 
 import (
 	"context"
-	"errors"
 	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/dao/criteria"
 	"sync"
 )
 
-// Service implements an in-memory process storage
+// Service implements an in-memory, thread-safe store for processes.  All API
+// methods work with copies to eliminate data races between goroutines.
 type Service struct {
 	processes map[string]*execution.Process
 	mux       sync.RWMutex
 }
 
-// Ensure Service implements dao.Service
 var _ dao.Service[string, execution.Process] = (*Service)(nil)
 
-// Save stores a process in memory
-func (s *Service) Save(ctx context.Context, process *execution.Process) error {
-	if process == nil {
-		return errors.New("cannot save nil process")
+func (s *Service) Save(_ context.Context, p *execution.Process) error {
+	if p == nil {
+		return dao.ErrNilEntity
 	}
-	if process.ID == "" {
-		return errors.New("process ID cannot be empty")
+	if p.ID == "" {
+		return dao.ErrInvalidID
 	}
 
 	s.mux.Lock()
 	defer s.mux.Unlock()
-	s.processes[process.ID] = process
+
+	s.processes[p.ID] = p.Clone()
 	return nil
 }
 
-// Load retrieves a process by ID from memory
-func (s *Service) Load(ctx context.Context, id string) (*execution.Process, error) {
+func (s *Service) Load(_ context.Context, id string) (*execution.Process, error) {
 	if id == "" {
-		return nil, errors.New("process ID cannot be empty")
+		return nil, dao.ErrInvalidID
 	}
 
 	s.mux.RLock()
-	defer s.mux.RUnlock()
+	p, ok := s.processes[id]
+	s.mux.RUnlock()
 
-	process, exists := s.processes[id]
-	if !exists {
-		return nil, errors.New("process not found")
+	if !ok {
+		return nil, dao.ErrNotFound
 	}
-	return process, nil
+	return p.Clone(), nil
 }
 
-// Delete removes a process from memory
-func (s *Service) Delete(ctx context.Context, id string) error {
+func (s *Service) Delete(_ context.Context, id string) error {
 	if id == "" {
-		return errors.New("process ID cannot be empty")
+		return dao.ErrInvalidID
 	}
 
 	s.mux.Lock()
 	defer s.mux.Unlock()
 
-	if _, exists := s.processes[id]; !exists {
-		return errors.New("process not found")
+	if _, ok := s.processes[id]; !ok {
+		return dao.ErrNotFound
 	}
 	delete(s.processes, id)
 	return nil
 }
 
-// List returns all processes from memory
-func (s *Service) List(ctx context.Context, parameters ...*dao.Parameter) ([]*execution.Process, error) {
+func (s *Service) List(_ context.Context, parameters ...*dao.Parameter) ([]*execution.Process, error) {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 
-	processList := make([]*execution.Process, 0, len(s.processes))
-	for _, process := range s.processes {
-		if !criteria.FilterByState(process.State, parameters) {
+	out := make([]*execution.Process, 0, len(s.processes))
+	for _, p := range s.processes {
+		if !criteria.FilterByState(p.State, parameters) {
 			continue
 		}
-		processList = append(processList, process)
+		out = append(out, p.Clone())
 	}
-	return processList, nil
+	return out, nil
 }
 
-// New creates a new in-memory process storage service
 func New() *Service {
-	return &Service{
-		processes: make(map[string]*execution.Process),
-	}
+	return &Service{processes: map[string]*execution.Process{}}
 }
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------

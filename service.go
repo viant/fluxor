@@ -29,6 +29,7 @@ import (
 )
 
 type Service struct {
+	config            *Config                              `json:"config,omitempty"`
 	runtime           *Runtime                             `json:"runtime,omitempty"`
 	metaService       *meta.Service                        `json:"metaService,omitempty"`
 	extensionTypes    []*x.Type                            `json:"extensionTypes,omitempty"`
@@ -132,7 +133,33 @@ func (s *Service) RegisterExtensionType(aType *x.Type) {
 }
 
 func New(options ...Option) *Service {
-	ret := &Service{runtime: &Runtime{}}
-	ret.init(options)
+	return NewFromConfig(nil, options...)
+}
+
+// NewFromConfig constructs the Fluxor engine using a declarative configuration
+// that can be further customised by functional options. The precedence order
+// is:
+//  1. package defaults (via DefaultConfig)
+//  2. values present in cfg (may be nil – treated as empty)
+//  3. values set by Option functions (highest priority)
+func NewFromConfig(cfg *Config, opts ...Option) *Service {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
+
+	ret := &Service{
+		runtime: &Runtime{},
+		config:  cfg,
+	}
+
+	// Translate selected cfg fields into pre-applied options so that option
+	// functions provided by the caller can still override them.
+	pre := []Option{}
+	if cfg.Processor.WorkerCount > 0 {
+		pre = append(pre, WithProcessorWorkers(cfg.Processor.WorkerCount))
+	}
+
+	// Apply config-derived options first, then caller-supplied ones.
+	ret.init(append(pre, opts...))
 	return ret
 }

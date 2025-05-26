@@ -9,11 +9,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/service/event"
+	"github.com/viant/fluxor/tracing"
 	"github.com/viant/structology/conv"
 )
 
@@ -106,17 +108,42 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 		return nil
 	}
 
+	// ------------------------------------------------------------------
+	// OpenTelemetry span for the task action
+	// ------------------------------------------------------------------
+	spanName := fmt.Sprintf("task.execute %s.%s", action.Service, action.Method)
+	ctx, span := tracing.StartSpan(ctx, spanName, "INTERNAL")
+	span.WithAttributes(map[string]string{
+		"execution.id":  anExecution.ID,
+		"process.id":    process.ID,
+		"workflow.name": process.Name,
+		"task.id":       anExecution.TaskID,
+		"service":       action.Service,
+		"method":        action.Method,
+	})
+
+	var spanErr error
+	defer func(start time.Time) {
+		// record duration as attribute (ms)
+		durMs := time.Since(start).Milliseconds()
+		span.WithAttributes(map[string]string{"duration.ms": fmt.Sprint(durMs)})
+		tracing.EndSpan(span, spanErr)
+	}(time.Now())
+
 	taskService := s.actions.Lookup(action.Service)
 	if taskService == nil {
-		return fmt.Errorf("service %v not found", action.Service)
+		spanErr = fmt.Errorf("service %v not found", action.Service)
+		return spanErr
 	}
 	if action.Method == "" {
-		return fmt.Errorf("method not found for service %v", action.Service)
+		spanErr = fmt.Errorf("method not found for service %v", action.Service)
+		return spanErr
 	}
 
 	method, err := taskService.Method(action.Method)
 	if err != nil {
-		return fmt.Errorf("failed to find method %v for service %v: %w", action.Method, action.Service, err)
+		spanErr = fmt.Errorf("failed to find method %v for service %v: %w", action.Method, action.Service, err)
+		return spanErr
 	}
 
 	// Prepare a task session.
@@ -126,30 +153,35 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 		execution.WithTypes(s.actions.Types()))
 
 	if err = session.ApplyParameters(task.Init); err != nil {
-		return err
+		spanErr = err
+		return spanErr
 	}
 
 	signature := taskService.Methods().Lookup(action.Method)
 
 	output, err := session.TypedValue(signature.Output, map[string]interface{}{})
 	if err != nil {
-		return err
+		spanErr = err
+		return spanErr
 	}
 
 	taskInput := action.Input
 	if taskInput, err = session.Expand(action.Input); err != nil {
-		return err
+		spanErr = err
+		return spanErr
 	}
 
 	input, err := session.TypedValue(signature.Input, taskInput)
 	anExecution.Input = input
 	if err != nil {
-		return err
+		spanErr = err
+		return spanErr
 	}
 
 	// Invoke the user-defined method.
 	if err = method(ctx, input, output); err != nil {
-		return err
+		spanErr = err
+		return spanErr
 	}
 
 	// Call the listener (if any).

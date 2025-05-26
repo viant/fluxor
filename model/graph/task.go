@@ -26,6 +26,16 @@ type (
 		Goto      []*Transition    `json:"goto,omitempty" yaml:"goto,omitempty"`
 		Async     bool             `json:"async,omitempty" yaml:"async,omitempty"`
 		AutoPause *bool            `json:"autoPause,omitempty" yaml:"autoPause,omitempty"`
+		Retry     *Retry           `json:"retry,omitempty" yaml:"retry,omitempty"`
+	}
+
+	// Retry strategy for task
+	Retry struct {
+		Type       string  `json:"type,omitempty" yaml:"type,omitempty"` // fixed, exponential, none
+		MaxRetries int     `json:"maxRetries,omitempty" yaml:"maxRetries,omitempty"`
+		Delay      string  `json:"delay,omitempty" yaml:"delay,omitempty"`           // base delay (duration string)
+		Multiplier float64 `json:"multiplier,omitempty" yaml:"multiplier,omitempty"` // exponential multiplier (>1)
+		MaxDelay   string  `json:"maxDelay,omitempty" yaml:"maxDelay,omitempty"`
 	}
 
 	Template struct {

@@ -19,6 +19,7 @@ type Execution struct {
 	Input        interface{}            `json:"input,omitempty"`
 	Output       interface{}            `json:"empty,omitempty"`
 	Error        string                 `json:"error,omitempty"`
+	Attempts     int                    `json:"attempts,omitempty"`
 	ScheduledAt  time.Time              `json:"scheduledAt"`
 	StartedAt    *time.Time             `json:"startedAt,omitempty"`
 	PausedAt     *time.Time             `json:"exectedAt,omitempty"`
@@ -157,4 +158,43 @@ func (e *Execution) Skip() {
 // generateExecutionID creates a unique ID for an execution
 func generateExecutionID(processID, taskID string) string {
 	return fmt.Sprintf("%s-%s-%d", processID, taskID, time.Now().UnixNano())
+}
+
+// Clone creates a deep copy of the execution so that the caller can mutate it
+// without affecting the original instance.  Only mutable collections are
+// deep-copied; pointer fields referencing immutable data (Input / Output /
+// Workflow structures) are left as-is.
+func (e *Execution) Clone() *Execution {
+	if e == nil {
+		return nil
+	}
+
+	clone := *e // shallow copy primitives & pointers
+
+	if e.Data != nil {
+		clone.Data = make(map[string]interface{}, len(e.Data))
+		for k, v := range e.Data {
+			clone.Data[k] = v
+		}
+	}
+
+	if e.Meta != nil {
+		clone.Meta = make(map[string]interface{}, len(e.Meta))
+		for k, v := range e.Meta {
+			clone.Meta[k] = v
+		}
+	}
+
+	if e.Dependencies != nil {
+		clone.Dependencies = make(map[string]TaskState, len(e.Dependencies))
+		for k, v := range e.Dependencies {
+			clone.Dependencies[k] = v
+		}
+	}
+
+	if len(e.DependsOn) > 0 {
+		clone.DependsOn = append([]string(nil), e.DependsOn...)
+	}
+
+	return &clone
 }

@@ -10,7 +10,7 @@ import (
 
 type WaitInput struct {
 	ProcessID         string `json:"processID,omitempty"`
-	TimeoutInSec      int    `json:"timeoutSec,omitempty"`
+	TimeoutInMs       int    `json:"timeoutSec,omitempty"`
 	PoolFrequencyInMs int    `json:"poolTimeMs,omitempty"`
 }
 
@@ -18,8 +18,8 @@ func (i *WaitInput) Init(ctx context.Context) {
 	if i.PoolFrequencyInMs == 0 {
 		i.PoolFrequencyInMs = 200
 	}
-	if i.TimeoutInSec == 0 {
-		i.TimeoutInSec = 300 //5 min
+	if i.TimeoutInMs == 0 {
+		i.TimeoutInMs = 300000 //5 min
 	}
 }
 
@@ -36,7 +36,7 @@ type WaitOutput execution.ProcessOutput
 // WaitForProcess waits for a process to complete
 func (s *Service) WaitForProcess(ctx context.Context, id string, timeoutMs int) (*WaitOutput, error) {
 	input := &WaitInput{ProcessID: id}
-	input.TimeoutInSec = timeoutMs
+	input.TimeoutInMs = timeoutMs
 	input.Init(ctx)
 	output := &WaitOutput{}
 	return output, s.wait(ctx, input, output)
@@ -59,7 +59,7 @@ func (s *Service) wait(ctx context.Context, in, out interface{}) error {
 	}
 
 	poolFrequency := time.Millisecond * time.Duration(input.PoolFrequencyInMs)
-	expiry := time.Now().Add(time.Second * time.Duration(input.TimeoutInSec))
+	expiry := time.Now().Add(time.Millisecond * time.Duration(input.TimeoutInMs))
 	started := time.Now()
 
 outer:

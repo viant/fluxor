@@ -2,83 +2,86 @@ package memory
 
 import (
 	"context"
-	"errors"
 	"github.com/viant/fluxor/model/execution"
 	"github.com/viant/fluxor/service/dao"
 	"sync"
 )
 
-// Service implements an in-memory process storage
+// Service implements an in-memory execution storage.  All operations are
+// thread-safe and return **copies** of the underlying objects to prevent data
+// races when callers mutate the returned instances.
 type Service struct {
 	executions map[string]*execution.Execution
 	mux        sync.RWMutex
 }
 
-// Ensure Service implements dao.Service
+// Compile-time check that Service implements the generic DAO interface.
 var _ dao.Service[string, execution.Execution] = (*Service)(nil)
 
-// Save stores a process in memory
-func (s *Service) Save(ctx context.Context, execution *execution.Execution) error {
-	if execution == nil {
-		return errors.New("cannot save nil execution")
+// Save persists (a clone of) the supplied execution.
+func (s *Service) Save(_ context.Context, e *execution.Execution) error {
+	if e == nil {
+		return dao.ErrNilEntity
 	}
-	if execution.ID == "" {
-		return errors.New("execution ID cannot be empty")
+	if e.ID == "" {
+		return dao.ErrInvalidID
 	}
 
 	s.mux.Lock()
 	defer s.mux.Unlock()
-	s.executions[execution.ID] = execution
+
+	s.executions[e.ID] = e.Clone()
 	return nil
 }
 
-// Load retrieves a process by ID from memory
-func (s *Service) Load(ctx context.Context, id string) (*execution.Execution, error) {
+// Load retrieves a copy of the execution or dao.ErrNotFound.
+func (s *Service) Load(_ context.Context, id string) (*execution.Execution, error) {
 	if id == "" {
-		return nil, errors.New("process ID cannot be empty")
+		return nil, dao.ErrInvalidID
 	}
 
 	s.mux.RLock()
-	defer s.mux.RUnlock()
+	e, ok := s.executions[id]
+	s.mux.RUnlock()
 
-	process, exists := s.executions[id]
-	if !exists {
-		return nil, errors.New("process not found")
+	if !ok {
+		return nil, dao.ErrNotFound
 	}
-	return process, nil
+	return e.Clone(), nil
 }
 
-// Delete removes a process from memory
-func (s *Service) Delete(ctx context.Context, id string) error {
+// Delete removes an execution.
+func (s *Service) Delete(_ context.Context, id string) error {
 	if id == "" {
-		return errors.New("process ID cannot be empty")
+		return dao.ErrInvalidID
 	}
 
 	s.mux.Lock()
 	defer s.mux.Unlock()
 
-	if _, exists := s.executions[id]; !exists {
-		return errors.New("process not found")
+	if _, ok := s.executions[id]; !ok {
+		return dao.ErrNotFound
 	}
 	delete(s.executions, id)
 	return nil
 }
 
-// List returns all executions from memory
-func (s *Service) List(ctx context.Context, parameters ...*dao.Parameter) ([]*execution.Execution, error) {
+// List returns shallow copies of all executions.  Parameter filtering is not
+// implemented for the in-memory store.
+func (s *Service) List(_ context.Context, _ ...*dao.Parameter) ([]*execution.Execution, error) {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 
-	list := make([]*execution.Execution, 0, len(s.executions))
-	for _, process := range s.executions {
-		list = append(list, process)
+	out := make([]*execution.Execution, 0, len(s.executions))
+	for _, e := range s.executions {
+		out = append(out, e.Clone())
 	}
-	return list, nil
+	return out, nil
 }
 
-// New creates a new in-memory process storage service
+// New constructor.
 func New() *Service {
-	return &Service{
-		executions: make(map[string]*execution.Execution),
-	}
+	return &Service{executions: map[string]*execution.Execution{}}
 }
+
+// (no package-private helpers – model/execution provides Clone())

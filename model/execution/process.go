@@ -161,6 +161,43 @@ func (p *Process) IncrementActiveTaskCount() int {
 	return p.ActiveTaskCount
 }
 
+// Clone creates a deep copy of the Process suitable for safe concurrent
+// reads/mutations outside the original store.  The Workflow pointer is not
+// cloned because workflows are immutable after initial load.
+func (p *Process) Clone() *Process {
+	if p == nil {
+		return nil
+	}
+
+	out := *p // shallow copy primitives & pointers
+
+	if p.Errors != nil {
+		out.Errors = make(map[string]string, len(p.Errors))
+		for k, v := range p.Errors {
+			out.Errors[k] = v
+		}
+	}
+
+	if p.ActiveTaskGroups != nil {
+		out.ActiveTaskGroups = make(map[string]bool, len(p.ActiveTaskGroups))
+		for k, v := range p.ActiveTaskGroups {
+			out.ActiveTaskGroups[k] = v
+		}
+	}
+
+	if len(p.Stack) > 0 {
+		out.Stack = make([]*Execution, len(p.Stack))
+		for i, ex := range p.Stack {
+			out.Stack[i] = ex.Clone()
+		}
+	}
+
+	// Session, Workflow and cached allTasks are intentionally shared; they are
+	// treated as read-only or have their own internal concurrency control.
+
+	return &out
+}
+
 // DecrementActiveTaskCount decrements the active task counter
 func (p *Process) DecrementActiveTaskCount() int {
 	p.mu.Lock()

@@ -2,14 +2,19 @@ package processor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/execution"
+	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/executor"
 	"github.com/viant/fluxor/service/messaging"
 	"github.com/viant/fluxor/tracing"
+	"log"
+	"math"
+	"strings"
 	"sync"
 	"time"
 )
@@ -55,6 +60,61 @@ type worker struct {
 	service  *Service
 	ctx      context.Context
 	cancelFn context.CancelFunc
+}
+
+// ---------------------------------------------------------------------------
+// Retry helpers
+// ---------------------------------------------------------------------------
+
+// shouldRetry returns (retry?, delay)
+func (s *Service) shouldRetry(cfg *graph.Retry, attempts int) (bool, time.Duration) {
+	// Use defaults when cfg nil
+	if cfg == nil {
+		if attempts >= s.config.MaxTaskRetries {
+			return false, 0
+		}
+		return true, s.config.RetryDelay
+	}
+
+	if strings.ToLower(cfg.Type) == "none" {
+		return false, 0
+	}
+
+	max := cfg.MaxRetries
+	if max == 0 {
+		max = s.config.MaxTaskRetries
+	}
+	if attempts >= max {
+		return false, 0
+	}
+
+	// Parse base delay
+	baseDelay := s.config.RetryDelay
+	if cfg.Delay != "" {
+		if d, err := time.ParseDuration(cfg.Delay); err == nil {
+			baseDelay = d
+		}
+	}
+
+	switch strings.ToLower(cfg.Type) {
+	case "exponential":
+		mult := cfg.Multiplier
+		if mult <= 1 {
+			mult = 2
+		}
+		delay := float64(baseDelay) * math.Pow(mult, float64(attempts))
+		maxDelay := cfg.MaxDelay
+		if maxDelay != "" {
+			if md, err := time.ParseDuration(maxDelay); err == nil {
+				if time.Duration(delay) > md {
+					delay = float64(md)
+				}
+			}
+		}
+		return true, time.Duration(delay)
+	default: // fixed
+		return true, baseDelay
+	}
 }
 
 // New creates a new executor service
@@ -106,30 +166,28 @@ func (w *worker) run() {
 	defer w.service.workerWg.Done()
 
 	for {
-		select {
-		case <-w.ctx.Done():
-			return
-		case <-w.service.shutdownCh:
-			return
-		default:
-			// Subscribe to next message with timeout
-			ctx, cancel := context.WithTimeout(w.ctx, 1*time.Second)
-			message, err := w.service.queue.Consume(ctx)
-			cancel()
+		// Block until we either get a message or the context is cancelled.
+		msg, err := w.service.queue.Consume(w.ctx)
 
-			if err != nil {
-				// Just a timeout, continue
-				continue
+		if err != nil {
+			// Context was cancelled – graceful shutdown.
+			if errors.Is(err, context.Canceled) {
+				return
 			}
+			// Transient error (e.g. queue closed); back off a bit.
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
 
-			if message != nil {
-				go func() {
-					err = w.service.processMessage(w.ctx, message)
-					if err != nil {
-						fmt.Printf("failed to process message: %v\n", err)
-					}
-				}()
-			}
+		if msg == nil {
+			continue
+		}
+
+		// Process the message in-line; if you want maximum parallelism spawn a
+		// goroutine here, but be mindful of ordering requirements.
+		if pErr := w.service.processMessage(w.ctx, msg); pErr != nil {
+			// Replace println with structured logging later.
+			log.Printf("worker %d: failed to process message: %v", w.id, pErr)
 		}
 	}
 }
@@ -247,6 +305,29 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 
 	err = s.executor.Execute(execCtx, anExecution, process)
 	if err != nil {
+		// ------------------------------------------------------------------
+		// Retry handling
+		// ------------------------------------------------------------------
+		taskDef := process.LookupTask(anExecution.TaskID)
+		retryCfg := taskDef.Retry
+		shouldRetry, delay := s.shouldRetry(retryCfg, anExecution.Attempts)
+		if shouldRetry {
+			anExecution.Attempts++
+			anExecution.State = execution.TaskStatePending
+			if daoErr := s.taskExecutionDao.Save(ctx, anExecution); daoErr != nil {
+				return message.Nack(fmt.Errorf("error %w and failed to save execution: %v", err, daoErr))
+			}
+			// Schedule manual retry after computed delay
+			go func(execCopy *execution.Execution, d time.Duration) {
+				time.Sleep(d)
+				_ = s.queue.Publish(context.Background(), execCopy)
+			}(anExecution.Clone(), delay)
+
+			// Acknowledge original message so queue does not auto-retry
+			return message.Ack()
+		}
+
+		// Give up – mark as failed
 		anExecution.Fail(err)
 		if daoErr := s.taskExecutionDao.Save(ctx, anExecution); daoErr != nil {
 			return message.Nack(fmt.Errorf("encounter error: %w, and failed to save execution: %v", err, daoErr))

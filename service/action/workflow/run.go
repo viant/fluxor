@@ -23,7 +23,7 @@ type RunInput struct {
 	Source         []byte                 `json:"source,omitempty"`
 	IgnoreError    bool                   `json:"throwError,omitempty"`
 	Async          bool                   `json:"wait,omitempty"`
-	WaitTimeInSec  int                    `json:"WaitTimeInSec,omitempty"`
+	WaitTimeInMs   int                    `json:"WaitTimeInMs,omitempty"`
 }
 
 type RunOutput struct {
@@ -46,8 +46,8 @@ func (i *RunInput) Init(ctx context.Context) {
 			i.Location = candidate
 		}
 	}
-	if i.WaitTimeInSec == 0 && !i.Async {
-		i.WaitTimeInSec = 300 //5 min
+	if i.WaitTimeInMs == 0 && !i.Async {
+		i.WaitTimeInMs = 300000 //5 min
 	}
 }
 
@@ -95,8 +95,8 @@ func (s *Service) run(ctx context.Context, in, out interface{}) (err error) {
 	output.ProcessID = process.ID
 	if !input.Async {
 		waitInput := &WaitInput{
-			ProcessID:    process.ID,
-			TimeoutInSec: input.WaitTimeInSec,
+			ProcessID:   process.ID,
+			TimeoutInMs: input.WaitTimeInMs,
 		}
 		waitOutput := &WaitOutput{}
 		if err := s.wait(ctx, waitInput, waitOutput); err != nil {

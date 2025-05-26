@@ -13,6 +13,7 @@ Fluxor is a powerful, Go-based workflow engine that allows you to define, execut
 - [Executors](#executors)
 - [Task Allocation](#task-allocation)
 - [Advanced Features](#advanced-features)
+- [Optional Task Approval & Policy Layer](#optional-task-approval--policy-layer)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -35,6 +36,7 @@ Fluxor is designed to provide a flexible, extensible workflow engine that can be
 - **State Management**: Track workflow state and execution history
 - **Concurrency Control**: Control the level of parallelism in workflow execution
 - **Extensible Architecture**: Easily extend the engine with custom components
+- **Optional Human Approval**: Pause selected tasks until a human (or custom logic) approves them
 
 ## Architecture
 
@@ -66,7 +68,21 @@ Fluxor consists of the following main components:
                        │   Persistence   │
                        │      Layer      │
                        └─────────────────┘
+
+                              │ (approval request)
+                              ▼
+                       ┌─────────────────┐
+                       │  Approval Queue │
+                       └────────┬────────┘
+                                │ consume
+                                ▼
+                       ┌─────────────────┐
+                       │  Approval       │
+                       │   Service       │
+                       └─────────────────┘
 ```
+
+The Approval components are initialised only when the **optional policy layer** (see below) is enabled.
 
 ## Getting Started
 
@@ -301,6 +317,38 @@ pipeline:
 ```
 
 In this example, `processOrders` will spawn one `processOne` task for each element in `orders`, binding the current element to `$order` in each task.
+
+
+## Optional Task Approval & Policy Layer
+
+Fluxor includes an **opt-in** policy subsystem that can pause task execution until it is manually approved – perfect for production safety-nets, dry-runs or interactive debugging.
+
+### Execution Modes
+
+| Mode | Behaviour |
+|------|-----------|
+| `auto` | Run tasks immediately (default). |
+| `ask`  | Create an approval request before running each task (unless whitelisted). |
+| `deny` | Skip the task and mark the execution as failed. |
+
+### Minimal Example
+
+```go
+ctx := policy.WithPolicy(context.Background(), &policy.Policy{
+    Mode: policy.ModeAsk,
+})
+
+proc, wait, _ := runtime.StartProcess(ctx, wf, nil)
+// ... respond to approval prompts ...
+```
+
+### End-to-end Flow
+
+1. The executor evaluates the policy before every task.
+2. If `Mode==ask` and no decision has been recorded yet, it emits an `approval.Request` message and suspends the execution (`waitForApproval`).
+3. The Approval Service consumes the request, calls your `AskFunc`, persists the decision and – if approved – re-enqueues the execution so a worker can continue processing.
+
+The default `AskFunc` bundled with Fluxor simply returns `true` (auto-approve) so that enabling the feature never blocks development.  Provide your own callback via `fluxor.WithApprovalAskFunc` for real-world use cases.
 
 
 ## Contributing
