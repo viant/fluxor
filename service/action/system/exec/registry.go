@@ -1,4 +1,4 @@
-package executor
+package exec
 
 import (
 	"context"
@@ -7,18 +7,19 @@ import (
 	"strings"
 )
 
-const name = "system/executor"
+const Name = "system/exec"
 
 func (s *Service) Name() string {
-	return name
+	return Name
 }
 
 func (s *Service) Methods() types.Signatures {
 	return []types.Signature{
 		{
-			Name:   "execute",
-			Input:  reflect.TypeOf(&Input{}),
-			Output: reflect.TypeOf(&Output{}),
+			Name:        "execute",
+			Description: "Executes a shell command on a remote host, or locally if no remote target is specified.",
+			Input:       reflect.TypeOf(&Input{}),
+			Output:      reflect.TypeOf(&Output{}),
 		}}
 }
 
@@ -34,7 +35,7 @@ func (s *Service) execute(context context.Context, in, out interface{}) error {
 	return s.Execute(context, input, output)
 }
 
-// Method returns method by name
+// Method returns method by Name
 func (s *Service) Method(name string) (types.Executable, error) {
 	switch strings.ToLower(name) {
 	case "execute":

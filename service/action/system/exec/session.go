@@ -1,10 +1,10 @@
-package executor
+package exec
 
 // Session represents a terminal session
 type Session struct {
-	ID              string            // Unique session identifier
-	CurrentDirectory string           // Current working directory
-	EnvVariables    map[string]string // Environment variables set in this session
+	ID               string            // Unique session identifier
+	CurrentDirectory string            // Current working directory
+	EnvVariables     map[string]string // Environment variables set in this session
 }
 
 // NewSession creates a new session

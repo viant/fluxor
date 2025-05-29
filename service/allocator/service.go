@@ -177,6 +177,10 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution2.Pro
 
 	// Get the top execution from the stack
 	anExecution := process.Peek()
+
+	if anExecution.RunAfter != nil && time.Now().Before(*anExecution.RunAfter) {
+		return nil
+	}
 	var err error
 	currentTask := process.LookupTask(anExecution.TaskID)
 	switch anExecution.State {
@@ -292,6 +296,16 @@ func (s *Service) handlePendingTask(ctx context.Context, process *execution2.Pro
 			return true, err
 		}
 		return true, nil
+	}
+
+	// If task has scheduleIn and this is the first time we reach scheduling
+	if currentTask.ScheduleIn != "" && anExecution.RunAfter == nil {
+		if d, err := time.ParseDuration(currentTask.ScheduleIn); err == nil {
+			runAt := time.Now().Add(d)
+			anExecution.RunAfter = &runAt
+		} else {
+			return true, fmt.Errorf("invalid scheduleIn duration on task %s: %v", currentTask.ID, err)
+		}
 	}
 
 	// Normal task: preserve existing Data (e.g. from template) and apply Init params

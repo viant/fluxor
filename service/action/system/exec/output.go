@@ -1,4 +1,4 @@
-package executor
+package exec
 
 // Command represents the result of executing a single command
 type Command struct {

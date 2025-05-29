@@ -35,8 +35,8 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		WorkerCount:    5,
-		MaxTaskRetries: 3,
-		RetryDelay:     5 * time.Second,
+		MaxTaskRetries: 1,
+		RetryDelay:     3 * time.Second,
 	}
 }
 
@@ -318,17 +318,12 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 		shouldRetry, delay := s.shouldRetry(retryCfg, anExecution.Attempts)
 		if shouldRetry {
 			anExecution.Attempts++
-			anExecution.State = execution2.TaskStatePending
+			runAt := time.Now().Add(delay)
+			anExecution.RunAfter = &runAt
+			anExecution.State = execution2.TaskStateScheduled
 			if daoErr := s.taskExecutionDao.Save(ctx, anExecution); daoErr != nil {
 				return message.Nack(fmt.Errorf("error %w and failed to save execution: %v", err, daoErr))
 			}
-			// Schedule manual retry after computed delay
-			go func(execCopy *execution2.Execution, d time.Duration) {
-				time.Sleep(d)
-				_ = s.queue.Publish(context.Background(), execCopy)
-			}(anExecution.Clone(), delay)
-
-			// Acknowledge original message so queue does not auto-retry
 			return message.Ack()
 		}
 

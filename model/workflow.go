@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/model/state"
+	"time"
 )
 
 // Workflow represents a workflow definition
@@ -173,6 +174,23 @@ func (w *Workflow) Validate() []error {
 		}
 	}
 	walkTpl(w.Pipeline)
+
+	// 5. Validate scheduleIn duration strings
+	var walkDelay func(*graph.Task)
+	walkDelay = func(t *graph.Task) {
+		if t == nil {
+			return
+		}
+		if t.ScheduleIn != "" {
+			if _, err := time.ParseDuration(t.ScheduleIn); err != nil {
+				issues = append(issues, fmt.Errorf("task %s has invalid scheduleIn duration: %v", t.ID, err))
+			}
+		}
+		for _, st := range t.Tasks {
+			walkDelay(st)
+		}
+	}
+	walkDelay(w.Pipeline)
 
 	return issues
 }

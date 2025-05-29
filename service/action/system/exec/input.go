@@ -1,4 +1,4 @@
-package executor
+package exec
 
 import (
 	"github.com/viant/fluxor/service/action/system"

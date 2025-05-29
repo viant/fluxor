@@ -27,6 +27,7 @@ type Execution struct {
 	CompletedAt  *time.Time             `json:"completedAt,omitempty"`
 	GoToTask     string                 `json:"gotoTask,omitempty"`
 	Meta         map[string]interface{} `json:"meta,omitempty"`
+	RunAfter     *time.Time             `json:"runAfter,omitempty"`
 	DependsOn    []string               `json:"dependencies"`
 	Dependencies map[string]TaskState   `json:"completed,omitempty"`
 }
@@ -195,6 +196,11 @@ func (e *Execution) Clone() *Execution {
 
 	if len(e.DependsOn) > 0 {
 		clone.DependsOn = append([]string(nil), e.DependsOn...)
+	}
+
+	if e.RunAfter != nil {
+		t := *e.RunAfter
+		clone.RunAfter = &t
 	}
 
 	return &clone

@@ -19,9 +19,10 @@ func (s Signatures) Lookup(name string) *Signature {
 
 // Signature	method signature
 type Signature struct {
-	Name   string
-	Input  reflect.Type
-	Output reflect.Type
+	Name        string
+	Description string
+	Input       reflect.Type
+	Output      reflect.Type
 }
 
 // Executable is a function that can be executed

@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const name = "system/storage"
+const Name = "system/storage"
 
 // Service provides file system operations using viant/afs
 type Service struct {
@@ -20,9 +20,9 @@ func New() *Service {
 	return &Service{fs: afs.New()}
 }
 
-// Name returns the service name
+// Name returns the service Name
 func (s *Service) Name() string {
-	return name
+	return Name
 }
 
 // Methods returns the service methods

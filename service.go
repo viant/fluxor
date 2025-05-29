@@ -6,10 +6,10 @@ import (
 	"github.com/viant/afs/storage"
 	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model/types"
-	execution2 "github.com/viant/fluxor/runtime/execution"
+	"github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/action/nop"
 	"github.com/viant/fluxor/service/action/printer"
-	aexecutor "github.com/viant/fluxor/service/action/system/executor"
+	"github.com/viant/fluxor/service/action/system/exec"
 	asecret "github.com/viant/fluxor/service/action/system/secret"
 	astorage "github.com/viant/fluxor/service/action/system/storage"
 	aworkflow "github.com/viant/fluxor/service/action/workflow"
@@ -29,19 +29,19 @@ import (
 )
 
 type Service struct {
-	config            *Config                               `json:"config,omitempty"`
-	runtime           *Runtime                              `json:"runtime,omitempty"`
-	metaService       *meta.Service                         `json:"metaService,omitempty"`
-	extensionTypes    []*x.Type                             `json:"extensionTypes,omitempty"`
-	extensionServices []types.Service                       `json:"extensionServices,omitempty"`
-	executor          executor.Service                      `json:"executor,omitempty"`
-	queue             messaging.Queue[execution2.Execution] `json:"queue,omitempty"`
-	rootTaskNodeName  string                                `json:"rootTaskNodeName,omitempty"`
-	metaBaseURL       string                                `json:"metaBaseURL,omitempty"`
-	metaFsOptions     []storage.Option                      `json:"metaFsOptions,omitempty"`
-	processorWorkers  int                                   `json:"processorWorkers,omitempty"`
-	actions           *extension.Actions                    `json:"actions,omitempty"`
-	eventService      *event.Service                        `json:"eventService,omitempty"`
+	config            *Config                              `json:"config,omitempty"`
+	runtime           *Runtime                             `json:"runtime,omitempty"`
+	metaService       *meta.Service                        `json:"metaService,omitempty"`
+	extensionTypes    []*x.Type                            `json:"extensionTypes,omitempty"`
+	extensionServices []types.Service                      `json:"extensionServices,omitempty"`
+	executor          executor.Service                     `json:"executor,omitempty"`
+	queue             messaging.Queue[execution.Execution] `json:"queue,omitempty"`
+	rootTaskNodeName  string                               `json:"rootTaskNodeName,omitempty"`
+	metaBaseURL       string                               `json:"metaBaseURL,omitempty"`
+	metaFsOptions     []storage.Option                     `json:"metaFsOptions,omitempty"`
+	processorWorkers  int                                  `json:"processorWorkers,omitempty"`
+	actions           *extension.Actions                   `json:"actions,omitempty"`
+	eventService      *event.Service                       `json:"eventService,omitempty"`
 }
 
 func (s *Service) init(options []Option) {
@@ -58,7 +58,7 @@ func (s *Service) init(options []Option) {
 		processor.WithTaskExecutionDAO(s.runtime.taskExecutionDao),
 		processor.WithProcessDAO(s.runtime.processorDAO))
 	s.actions.Register(printer.New())
-	s.actions.Register(aexecutor.New())
+	s.actions.Register(exec.New())
 	s.actions.Register(astorage.New())
 	s.actions.Register(asecret.New())
 	s.actions.Register(nop.New())
@@ -109,7 +109,7 @@ func (s *Service) ensureBaseSetup() {
 		s.runtime.workflowDAO = workflow.New(workflow.WithRootTaskNodeName(s.rootTaskNodeName), workflow.WithMetaService(s.metaService))
 	}
 	if s.queue == nil {
-		s.queue = mmemory.NewQueue[execution2.Execution](mmemory.DefaultConfig())
+		s.queue = mmemory.NewQueue[execution.Execution](mmemory.DefaultConfig())
 	}
 	if s.runtime.processorDAO == nil {
 		s.runtime.processorDAO = pmemory.New()
@@ -121,7 +121,7 @@ func (s *Service) ensureBaseSetup() {
 }
 
 func (s *Service) NewContext(ctx context.Context) context.Context {
-	return execution2.NewContext(ctx, s.actions, s.eventService)
+	return execution.NewContext(ctx, s.actions, s.eventService)
 }
 
 func (s *Service) Actions() *extension.Actions {

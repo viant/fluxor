@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const name = "system/secret"
+const Name = "system/secret"
 
 // Service provides secret management operations using viant/scy
 type Service struct {
@@ -22,9 +22,9 @@ func New() *Service {
 	}
 }
 
-// Name returns the service name
+// Name returns the service Name
 func (s *Service) Name() string {
-	return name
+	return Name
 }
 
 // Methods returns the service methods
