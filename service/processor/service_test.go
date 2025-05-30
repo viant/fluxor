@@ -79,7 +79,7 @@ func TestService_StartProcess(t *testing.T) {
 			// Create processor service with all required dependencies
 			processor, err := New(
 				WithMessageQueue(queue),
-				WithWorkers(1),
+				WithWorkers(100),
 				WithProcessDAO(processDAO),
 				WithTaskExecutionDAO(executionDAO),
 				WithExecutor(execService),

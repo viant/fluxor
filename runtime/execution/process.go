@@ -4,10 +4,44 @@ import (
 	"context"
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/graph"
+	"github.com/viant/fluxor/policy"
 	"github.com/viant/fluxor/tracing"
 	"sync"
 	"time"
 )
+
+// RegisterTask adds a task (and its subtasks) to the process' task lookup map
+// at runtime.  It is primarily used for template expansions that create tasks
+// dynamically after the workflow has started executing.
+func (p *Process) RegisterTask(t *graph.Task) {
+	if t == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.allTasks == nil {
+		p.allTasks = make(map[string]*graph.Task)
+	}
+	var recurse func(*graph.Task)
+	recurse = func(task *graph.Task) {
+		if task == nil {
+			return
+		}
+		if _, exists := p.allTasks[task.ID]; !exists {
+			p.allTasks[task.ID] = task
+			if task.Name != "" {
+				p.allTasks[task.Name] = task
+			}
+		}
+		for _, st := range task.Tasks {
+			recurse(st)
+		}
+		if task.Template != nil {
+			recurse(task.Template.Task)
+		}
+	}
+	recurse(t)
+}
 
 // Process state constants
 const (
@@ -37,6 +71,7 @@ type Process struct {
 	// For serverless environments
 	ActiveTaskCount  int                    `json:"activeTaskCount"`
 	ActiveTaskGroups map[string]bool        `json:"activeTaskGroups"`
+	Policy           *policy.Config         `json:"policy,omitempty"`
 	mu               sync.RWMutex           // Protects concurrent access
 	allTasks         map[string]*graph.Task // Cached all tasks
 }
@@ -171,7 +206,34 @@ func (p *Process) Clone() *Process {
 		return nil
 	}
 
-	out := *p // shallow copy primitives & pointers
+	// Copy all scalar and pointer fields except the sync.RWMutex (mu) which
+	// must not be copied by value.  Fields that may be mutated after clone are
+	// deep-copied to avoid accidental data races.
+
+	out := &Process{
+		ID:              p.ID,
+		ParentID:        p.ParentID,
+		SCN:             p.SCN,
+		Name:            p.Name,
+		State:           p.State,
+		Workflow:        p.Workflow, // immutable – safe to share
+		CreatedAt:       p.CreatedAt,
+		UpdatedAt:       p.UpdatedAt,
+		FinishedAt:      p.FinishedAt,
+		Session:         p.Session, // has own locking, safe to share
+		Span:            p.Span,
+		Mode:            p.Mode,
+		ActiveTaskCount: p.ActiveTaskCount,
+		Policy:          p.Policy,
+		// allTasks intentionally left nil – will be lazily rebuilt if needed
+	}
+
+	if len(p.Stack) > 0 {
+		out.Stack = make([]*Execution, len(p.Stack))
+		for i, ex := range p.Stack {
+			out.Stack[i] = ex.Clone()
+		}
+	}
 
 	if p.Errors != nil {
 		out.Errors = make(map[string]string, len(p.Errors))
@@ -187,17 +249,21 @@ func (p *Process) Clone() *Process {
 		}
 	}
 
-	if len(p.Stack) > 0 {
-		out.Stack = make([]*Execution, len(p.Stack))
-		for i, ex := range p.Stack {
-			out.Stack[i] = ex.Clone()
+	// Preserve dynamically registered tasks so that lookups for template-
+	// generated or runtime-added tasks continue to work after the process
+	// instance has been cloned (e.g. when it is stored in / loaded from the
+	// DAO).  Without this copy, any task added through RegisterTask at runtime
+	// would be lost because `allTasks` would be nil in the clone – subsequent
+	// allocator iterations would then fail with "task <id> not found".
+
+	if p.allTasks != nil {
+		out.allTasks = make(map[string]*graph.Task, len(p.allTasks))
+		for k, v := range p.allTasks {
+			out.allTasks[k] = v
 		}
 	}
 
-	// Session, Workflow and cached allTasks are intentionally shared; they are
-	// treated as read-only or have their own internal concurrency control.
-
-	return &out
+	return out
 }
 
 // DecrementActiveTaskCount decrements the active task counter

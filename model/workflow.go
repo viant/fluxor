@@ -67,7 +67,9 @@ func (w *Workflow) Validate() []error {
 		if seen[t.ID] {
 			issues = append(issues, fmt.Errorf("duplicate task id %s", t.ID))
 		}
+
 		seen[t.ID] = true
+		seen[t.Name] = true //g
 
 		// validate dependencies refer to existing tasks (so far)
 		for _, dep := range t.DependsOn {

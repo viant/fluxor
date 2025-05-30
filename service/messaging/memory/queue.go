@@ -127,6 +127,7 @@ func NewQueue[T any](config Config) *Queue[T] {
 
 // Publish adds a new item to the queue
 func (q *Queue[T]) Publish(ctx context.Context, t *T) error {
+	// intentionally left blank – no-op for production builds
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

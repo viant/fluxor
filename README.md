@@ -124,7 +124,6 @@ func runIt() error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("process:", process.ID)
 	output, err := wait(ctx, time.Minute)
 	if err != nil {
 		return err

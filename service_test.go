@@ -3,11 +3,14 @@ package fluxor_test
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	_ "github.com/viant/afs/embed"
 	"github.com/viant/fluxor"
+	"github.com/viant/fluxor/policy"
 	"github.com/viant/fluxor/runtime/execution"
+	"github.com/viant/fluxor/service/approval"
 	"testing"
 	"time"
 )
@@ -19,17 +22,31 @@ func TestService(t *testing.T) {
 	srv := fluxor.New(
 		fluxor.WithMetaFsOptions(&embedFS),
 		fluxor.WithMetaBaseURL("embed:///testdata"),
+		//fluxor.WithExecutorOptions(executor.WithListener(executor.StdoutListener)),
 		fluxor.WithTracing("fluxor", "0.0.1", "span.txt"),
 	)
 
 	runtime := srv.Runtime()
 	ctx := context.Background()
+
+	approvalSrv := srv.ApprovalService()
+	done := approval.AutoReject(ctx, approvalSrv, "", 10*time.Millisecond)
+	defer done()
+	ctx = policy.WithPolicy(ctx, &policy.Policy{ // only to copy into process
+		Mode: policy.ModeAsk,
+	})
+
 	workflow, err := runtime.LoadWorkflow(ctx, "parent.yaml")
 	if !assert.Nil(t, err) {
 		return
 	}
 	assert.NotNil(t, workflow)
 	_ = runtime.Start(ctx)
+
+	ctx = policy.WithPolicy(ctx, &policy.Policy{ // only to copy into process
+		Mode: policy.ModeAsk,
+	})
+
 	process, wait, err := runtime.StartProcess(ctx, workflow, map[string]interface{}{})
 	if !assert.Nil(t, err) {
 		return
@@ -37,7 +54,8 @@ func TestService(t *testing.T) {
 	assert.NotNil(t, process)
 
 	output, err := wait(ctx, time.Hour)
-	fmt.Println(output, err)
+	data, _ := json.Marshal(output)
+	fmt.Println(string(data), err)
 
 }
 
@@ -58,6 +76,7 @@ func TestTemplate(t *testing.T) {
 	assert.NotNil(t, workflow)
 	// start runtime (processor+allocator)
 	_ = runtime.Start(ctx)
+
 	// Start the process with initial orders
 	process, wait, err := runtime.StartProcess(ctx, workflow, map[string]interface{}{
 		"orders": []interface{}{"apple", "banana", "cherry"},
@@ -71,6 +90,7 @@ func TestTemplate(t *testing.T) {
 	if !assert.Nil(t, err) {
 		return
 	}
+	fmt.Println("done")
 	// Process should complete without errors
 	assert.EqualValues(t, execution.StateCompleted, output.State)
 }

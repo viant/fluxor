@@ -10,26 +10,28 @@ import (
 
 // Execution represents a single task execution
 type Execution struct {
-	ID           string                 `json:"id"`
-	ProcessID    string                 `json:"processId"`
-	ParentTaskID string                 `json:"parentTaskId,omitempty"`
-	GroupID      string                 `json:"groupId,omitempty"`
-	TaskID       string                 `json:"taskId"`
-	State        TaskState              `json:"state"`
-	Data         map[string]interface{} `json:"data,omitempty"`
-	Input        interface{}            `json:"input,omitempty"`
-	Output       interface{}            `json:"empty,omitempty"`
-	Error        string                 `json:"error,omitempty"`
-	Attempts     int                    `json:"attempts,omitempty"`
-	ScheduledAt  time.Time              `json:"scheduledAt"`
-	StartedAt    *time.Time             `json:"startedAt,omitempty"`
-	PausedAt     *time.Time             `json:"exectedAt,omitempty"`
-	CompletedAt  *time.Time             `json:"completedAt,omitempty"`
-	GoToTask     string                 `json:"gotoTask,omitempty"`
-	Meta         map[string]interface{} `json:"meta,omitempty"`
-	RunAfter     *time.Time             `json:"runAfter,omitempty"`
-	DependsOn    []string               `json:"dependencies"`
-	Dependencies map[string]TaskState   `json:"completed,omitempty"`
+	ID             string                 `json:"id"`
+	ProcessID      string                 `json:"processId"`
+	ParentTaskID   string                 `json:"parentTaskId,omitempty"`
+	GroupID        string                 `json:"groupId,omitempty"`
+	TaskID         string                 `json:"taskId"`
+	State          TaskState              `json:"state"`
+	Data           map[string]interface{} `json:"data,omitempty"`
+	Input          interface{}            `json:"input,omitempty"`
+	Output         interface{}            `json:"empty,omitempty"`
+	Error          string                 `json:"error,omitempty"`
+	Attempts       int                    `json:"attempts,omitempty"`
+	ScheduledAt    time.Time              `json:"scheduledAt"`
+	StartedAt      *time.Time             `json:"startedAt,omitempty"`
+	PausedAt       *time.Time             `json:"exectedAt,omitempty"`
+	CompletedAt    *time.Time             `json:"completedAt,omitempty"`
+	GoToTask       string                 `json:"gotoTask,omitempty"`
+	Meta           map[string]interface{} `json:"meta,omitempty"`
+	RunAfter       *time.Time             `json:"runAfter,omitempty"`
+	DependsOn      []string               `json:"dependencies"`
+	Dependencies   map[string]TaskState   `json:"completed,omitempty"`
+	Approved       *bool                  `json:"approved,omitempty"`
+	ApprovalReason string                 `json:"approvedDecision,omitempty"` // "yes" or "no"
 }
 
 func (e *Execution) Context(eventType string, task *graph.Task) *event.Context {

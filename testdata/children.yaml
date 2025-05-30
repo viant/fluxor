@@ -7,7 +7,7 @@ pipeline:
     input:
       message: 'Child started $x'
   exec:
-    action: system/executor:execute
+    action: system/exec:execute
     input:
       commands:
         - echo 'running $x'

@@ -21,7 +21,7 @@ type ProcessorConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Processor: ProcessorConfig{
-			WorkerCount: 1, // matches hard-coded value in Service.init previously
+			WorkerCount: 100, // matches hard-coded value in Service.init previously
 		},
 	}
 }

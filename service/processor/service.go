@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/graph"
+	"github.com/viant/fluxor/policy"
 	execution2 "github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/executor"
@@ -168,7 +169,6 @@ func (w *worker) run() {
 	for {
 		// Block until we either get a message or the context is cancelled.
 		msg, err := w.service.queue.Consume(w.ctx)
-
 		if err != nil {
 			// Context was cancelled – graceful shutdown.
 			if errors.Is(err, context.Canceled) {
@@ -209,6 +209,12 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 
 	// Create the process
 	aProcess = execution2.NewProcess(processID, workflow.Name, workflow, init)
+
+	// Propagate policy (if any) from the incoming context so that executor can
+	// enforce it later on.
+	if p := policy.FromContext(ctx); p != nil {
+		aProcess.Policy = policy.ToConfig(p)
+	}
 
 	// Start a parent tracing span covering the whole process lifetime
 	ctx, procSpan := tracing.StartSpan(ctx, fmt.Sprintf("process.run %s", workflow.Name), "INTERNAL")
@@ -284,6 +290,7 @@ func (s *Service) ResumeProcess(ctx context.Context, processID string) error {
 
 // processMessage handles a single task execution message
 func (s *Service) processMessage(ctx context.Context, message messaging.Message[execution2.Execution]) (err error) {
+
 	anExecution := message.T()
 
 	// Start the execution
@@ -308,10 +315,14 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 	execCtx := context.WithValue(ctx, execution2.ProcessKey, process)
 	execCtx = context.WithValue(execCtx, execution2.ExecutionKey, anExecution)
 
+	// Execute the task action.  Special-case ErrWaitForApproval which is a
+	// transitional state rather than a real failure.
+
 	err = s.executor.Execute(execCtx, anExecution, process)
+
 	if err != nil {
 		// ------------------------------------------------------------------
-		// Retry handling
+		// Retry handling (all other errors)
 		// ------------------------------------------------------------------
 		taskDef := process.LookupTask(anExecution.TaskID)
 		retryCfg := taskDef.Retry
@@ -324,6 +335,37 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 			if daoErr := s.taskExecutionDao.Save(ctx, anExecution); daoErr != nil {
 				return message.Nack(fmt.Errorf("error %w and failed to save execution: %v", err, daoErr))
 			}
+
+			// ------------------------------------------------------------------
+			// Keep the execution embedded inside the parent process up to date so
+			// that the allocator sees the correct RunAfter/Attempts values and does
+			// not immediately reschedule the same task in a tight loop.
+			// ------------------------------------------------------------------
+			if proc, pErr := s.processDAO.Load(ctx, anExecution.ProcessID); pErr == nil && proc != nil {
+				if inProc := proc.LookupExecution(anExecution.TaskID); inProc != nil {
+					inProc.RunAfter = anExecution.RunAfter
+					inProc.Attempts = anExecution.Attempts
+					inProc.State = anExecution.State
+					inProc.Error = err.Error()
+					// propagate error to process-level map so that allocator can mark the
+					// whole process as failed once the stack drains.
+					if task := proc.LookupTask(anExecution.TaskID); task != nil {
+						procKey := task.Namespace
+						if procKey == "" {
+							procKey = task.ID
+						}
+						proc.Errors[procKey] = err.Error()
+					}
+					// mark dependency in parent execution (if any)
+					if parent := proc.LookupExecution(inProc.ParentTaskID); parent != nil {
+						parent.Dependencies[inProc.TaskID] = execution2.TaskStateFailed
+					}
+					// remove failed execution from the stack so that allocator can
+					// continue evaluating remaining tasks.
+					proc.Remove(inProc)
+				}
+				_ = s.processDAO.Save(ctx, proc)
+			}
 			return message.Ack()
 		}
 
@@ -332,8 +374,44 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 		if daoErr := s.taskExecutionDao.Save(ctx, anExecution); daoErr != nil {
 			return message.Nack(fmt.Errorf("encounter error: %w, and failed to save execution: %v", err, daoErr))
 		}
+
+		// ------------------------------------------------------------------
+		// Propagate the failed state to the process so that the allocator can
+		// advance the workflow and eventually mark the entire run as failed.
+		// ------------------------------------------------------------------
+		if proc, pErr := s.processDAO.Load(ctx, anExecution.ProcessID); pErr == nil && proc != nil {
+			if inProc := proc.LookupExecution(anExecution.TaskID); inProc != nil {
+				inProc.State = execution2.TaskStateFailed
+				inProc.Error = anExecution.Error
+			}
+
+			// Record error under namespace OR fallback to TaskID so the user can
+			// see which task failed.
+			if task := proc.LookupTask(anExecution.TaskID); task != nil {
+				key := task.Namespace
+				if key == "" {
+					key = task.ID
+				}
+				proc.Errors[key] = err.Error()
+			}
+
+			// Stop the workflow immediately – clear remaining work and mark the
+			// process as failed.
+			proc.Stack = nil
+			proc.SetState(execution2.StateFailed)
+			_ = s.processDAO.Save(ctx, proc)
+		}
+
 		message.Ack()
 		return nil
+	}
+
+	if anExecution.State.IsWaitForApproval() {
+		// Update the process with the completed execution
+		if err := s.taskExecutionDao.Save(ctx, anExecution); err != nil {
+			return message.Nack(err)
+		}
+		return message.Ack()
 	}
 
 	task := process.LookupTask(anExecution.TaskID)

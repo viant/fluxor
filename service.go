@@ -14,6 +14,8 @@ import (
 	astorage "github.com/viant/fluxor/service/action/system/storage"
 	aworkflow "github.com/viant/fluxor/service/action/workflow"
 	"github.com/viant/fluxor/service/allocator"
+	"github.com/viant/fluxor/service/approval"
+	"github.com/viant/fluxor/service/approval/memory"
 	ememory "github.com/viant/fluxor/service/dao/execution/memory"
 	pmemory "github.com/viant/fluxor/service/dao/process/memory"
 	"github.com/viant/fluxor/service/dao/workflow"
@@ -29,8 +31,10 @@ import (
 )
 
 type Service struct {
-	config            *Config                              `json:"config,omitempty"`
-	runtime           *Runtime                             `json:"runtime,omitempty"`
+	config  *Config  `json:"config,omitempty"`
+	runtime *Runtime `json:"runtime,omitempty"`
+
+	approvalService   approval.Service
 	metaService       *meta.Service                        `json:"metaService,omitempty"`
 	extensionTypes    []*x.Type                            `json:"extensionTypes,omitempty"`
 	extensionServices []types.Service                      `json:"extensionServices,omitempty"`
@@ -42,6 +46,7 @@ type Service struct {
 	processorWorkers  int                                  `json:"processorWorkers,omitempty"`
 	actions           *extension.Actions                   `json:"actions,omitempty"`
 	eventService      *event.Service                       `json:"eventService,omitempty"`
+	executorOptions   []texecutor.Option                   `json:"-"`
 }
 
 func (s *Service) init(options []Option) {
@@ -50,11 +55,20 @@ func (s *Service) init(options []Option) {
 	}
 	s.ensureBaseSetup()
 	s.actions = extension.NewActions(s.extensionTypes...)
-	s.executor = texecutor.NewService(s.actions)
+	s.approvalService = memory.New(s.runtime.taskExecutionDao, memory.WithProcessDAO(s.runtime.processorDAO))
+
+	s.executorOptions = append(s.executorOptions, texecutor.WithApprovalService(s.approvalService))
+	// Create executor after injecting approvalService option
+	s.executor = texecutor.NewService(s.actions, s.executorOptions...)
+
+	workers := s.config.Processor.WorkerCount
+	if s.processorWorkers > 0 {
+		workers = s.processorWorkers
+	}
 	s.runtime.processor, _ = processor.New(
 		processor.WithTaskExecutor(s.executor),
 		processor.WithMessageQueue(s.queue),
-		processor.WithWorkers(1),
+		processor.WithWorkers(workers),
 		processor.WithTaskExecutionDAO(s.runtime.taskExecutionDao),
 		processor.WithProcessDAO(s.runtime.processorDAO))
 	s.actions.Register(printer.New())
@@ -90,6 +104,10 @@ func (s *Service) RegisterExtensionServices(services ...types.Service) {
 	for i := range services {
 		s.actions.Register(services[i])
 	}
+}
+
+func (s *Service) ApprovalService() approval.Service {
+	return s.approvalService
 }
 
 func (s *Service) Runtime() *Runtime {

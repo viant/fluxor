@@ -60,7 +60,10 @@ func (s *Service) wait(ctx context.Context, in, out interface{}) error {
 
 	poolFrequency := time.Millisecond * time.Duration(input.PoolFrequencyInMs)
 	expiry := time.Now().Add(time.Millisecond * time.Duration(input.TimeoutInMs))
-	started := time.Now()
+
+	//Always populate process ID so that caller can correlate the result even
+	//when the workflow finishes with an error or times-out.
+	output.ProcessID = input.ProcessID
 
 outer:
 	for {
@@ -72,7 +75,7 @@ outer:
 		case execution.StateCompleted, execution.StateFailed:
 			break outer
 		}
-		if expiry.Before(started) {
+		if time.Now().After(expiry) {
 			output.Timeout = true
 			break outer
 		}

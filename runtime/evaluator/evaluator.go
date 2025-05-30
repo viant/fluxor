@@ -349,7 +349,6 @@ func Evaluate(expr string, from map[string]interface{}) interface{} {
 	if err != nil {
 		evaluator := New()
 		return evaluator.Evaluate(expr, from)
-		return nil
 	}
 
 	// Evaluate the expression

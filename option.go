@@ -4,6 +4,7 @@ import (
 	"github.com/viant/afs/storage"
 	"github.com/viant/fluxor/model/types"
 	execution2 "github.com/viant/fluxor/runtime/execution"
+	"github.com/viant/fluxor/service/approval"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/event"
 	"github.com/viant/fluxor/service/messaging"
@@ -11,11 +12,18 @@ import (
 	"github.com/viant/fluxor/tracing"
 	"github.com/viant/x"
 
+	"github.com/viant/fluxor/service/executor"
+
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // Service represents fluxor service
 type Option func(s *Service)
+
+// WithApprovalService sets the approvalService service
+func WithApprovalService(svc approval.Service) Option {
+	return func(s *Service) { s.approvalService = svc }
+}
 
 // WithExtensionTypes sets the extension types
 func WithExtensionTypes(types ...*x.Type) Option {
@@ -76,6 +84,14 @@ func WithTaskExecutionDAO(dao dao.Service[string, execution2.Execution]) Option 
 func WithProcessorWorkers(count int) Option {
 	return func(s *Service) {
 		s.processorWorkers = count
+	}
+}
+
+// WithExecutorOptions lets the caller supply additional options passed to
+// executor.NewService (e.g. disabling the default StdoutListener).
+func WithExecutorOptions(opts ...executor.Option) Option {
+	return func(s *Service) {
+		s.executorOptions = append(s.executorOptions, opts...)
 	}
 }
 

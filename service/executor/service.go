@@ -8,12 +8,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	execution2 "github.com/viant/fluxor/runtime/execution"
+	"github.com/viant/fluxor/service/approval"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model/graph"
+	"github.com/viant/fluxor/policy"
+	"github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/event"
 	"github.com/viant/fluxor/tracing"
 	"github.com/viant/structology/conv"
@@ -53,6 +56,13 @@ func StdoutListener(task *graph.Task, input, output interface{}) {
 // Option is used to customise the executor instance.
 type Option func(*service)
 
+// WithApprovalService applies the approval service to the executor. The approval service is used to
+func WithApprovalService(approval approval.Service) Option {
+	return func(s *service) {
+		s.approval = approval
+	}
+}
+
 // WithListener overrides the listener invoked after every executed task. Passing nil disables the
 // callback entirely.
 func WithListener(l Listener) Option {
@@ -63,7 +73,7 @@ func WithListener(l Listener) Option {
 
 // Service represents a task executor.
 type Service interface {
-	Execute(ctx context.Context, execution *execution2.Execution, process *execution2.Process) error
+	Execute(ctx context.Context, execution *execution.Execution, process *execution.Process) error
 }
 
 // service is the concrete implementation of Service.
@@ -71,10 +81,11 @@ type service struct {
 	actions   *extension.Actions
 	converter *conv.Converter
 	listener  Listener
+	approval  approval.Service
 }
 
 // Execute executes a task.
-func (s *service) Execute(ctx context.Context, anExecution *execution2.Execution, process *execution2.Process) error {
+func (s *service) Execute(ctx context.Context, anExecution *execution.Execution, process *execution.Process) error {
 	task := process.LookupTask(anExecution.TaskID)
 	if task == nil {
 		return ErrTaskNotFound
@@ -86,12 +97,12 @@ func (s *service) Execute(ctx context.Context, anExecution *execution2.Execution
 	}
 
 	// Publish execution event if an event service is attached to the context.
-	if value := ctx.Value(execution2.EventKey); value != nil {
+	if value := ctx.Value(execution.EventKey); value != nil {
 		service := value.(*event.Service)
-		publisher, err := event.PublisherOf[*execution2.Execution](service)
+		publisher, err := event.PublisherOf[*execution.Execution](service)
 		if err == nil {
 			eCtx := anExecution.Context("executed", task)
-			anEvent := event.NewEvent[*execution2.Execution](eCtx, anExecution)
+			anEvent := event.NewEvent[*execution.Execution](eCtx, anExecution)
 			if err = publisher.Publish(ctx, anEvent); err != nil {
 				log.Printf("failed to publish task execution event: %v", err)
 			}
@@ -101,7 +112,7 @@ func (s *service) Execute(ctx context.Context, anExecution *execution2.Execution
 	return nil
 }
 
-func (s *service) execute(ctx context.Context, anExecution *execution2.Execution, process *execution2.Process, task *graph.Task) error {
+func (s *service) execute(ctx context.Context, anExecution *execution.Execution, process *execution.Process, task *graph.Task) error {
 	action := task.Action
 	if action == nil {
 		// Nothing to execute.
@@ -140,6 +151,89 @@ func (s *service) execute(ctx context.Context, anExecution *execution2.Execution
 		return spanErr
 	}
 
+	// ------------------------------------------------------------------
+	// Per-action policy hook (ask/auto/deny) – opt-in via context.
+	// ------------------------------------------------------------------
+	// Evaluate persisted policy declaration (approval/deny lists)
+	var pol *policy.Policy
+	if process != nil && process.Policy != nil {
+		pol = policy.FromConfig(process.Policy)
+	}
+
+	if pol != nil {
+		actionName := strings.ToLower(action.Service)
+		if action.Method != "" {
+			actionName += "." + strings.ToLower(action.Method)
+		}
+
+		// Allow / block lists first.
+		if !pol.IsAllowed(actionName) {
+			return fmt.Errorf("action %s is not allowed by policy", actionName)
+		}
+
+		switch pol.Mode {
+		case policy.ModeDeny:
+			return fmt.Errorf("action %s denied by policy", actionName)
+		case policy.ModeAsk:
+			// If the execution has already been approved or rejected, honour the
+			// previous decision instead of creating a new request. This prevents an
+			// infinite request → approval → re-request loop.
+			if anExecution.Approved != nil {
+				if *anExecution.Approved {
+					// Previously approved – continue and run the action just like in
+					// ModeAuto.
+					break
+				}
+
+				// Previously rejected – fail fast, include the user-supplied reason
+				reason := anExecution.ApprovalReason
+				if reason == "" {
+					reason = "rejected by user"
+				}
+				return fmt.Errorf("action %s rejected: %s", actionName, reason)
+			}
+
+			// ------------------------------------------------------------------
+			// No decision recorded yet – create an asynchronous approval request
+			// and pause execution until we get the answer.
+			// ------------------------------------------------------------------
+
+			var argMap map[string]interface{}
+			if m, ok := action.Input.(map[string]interface{}); ok {
+				argMap = m
+			}
+
+			if s.approval != nil {
+				// Start tracing span for approval request
+				ctxSpan, sp := tracing.StartSpan(ctx, fmt.Sprintf("approval.request %s", actionName), "INTERNAL")
+				_ = ctxSpan
+				sp.WithAttributes(map[string]string{
+					"execution.id": anExecution.ID,
+					"action":       actionName,
+				})
+				data, _ := json.Marshal(argMap)
+				// Use execution ID as the unique identifier for the approval request
+				// unless the caller supplies another value. This guarantees that every
+				// wait-for-approval state generates a retrievable request so that the
+				// approval service can later match it when Decide is invoked.
+				req := &approval.Request{
+					ID:          anExecution.ID,
+					ProcessID:   anExecution.ProcessID,
+					ExecutionID: anExecution.ID,
+					Action:      actionName,
+					Args:        data,
+					CreatedAt:   time.Now(),
+				}
+				_ = s.approval.RequestApproval(ctx, req)
+				tracing.EndSpan(sp, nil)
+			}
+
+			anExecution.State = execution.TaskStateWaitForApproval
+			anExecution.Approved = nil
+			return nil
+		}
+	}
+
 	method, err := taskService.Method(action.Method)
 	if err != nil {
 		spanErr = fmt.Errorf("failed to find method %v for service %v: %w", action.Method, action.Service, err)
@@ -148,9 +242,9 @@ func (s *service) execute(ctx context.Context, anExecution *execution2.Execution
 
 	// Prepare a task session.
 	session := process.Session.TaskSession(anExecution.Data,
-		execution2.WithConverter(s.converter),
-		execution2.WithImports(process.Workflow.Imports...),
-		execution2.WithTypes(s.actions.Types()))
+		execution.WithConverter(s.converter),
+		execution.WithImports(process.Workflow.Imports...),
+		execution.WithTypes(s.actions.Types()))
 
 	if err = session.ApplyParameters(task.Init); err != nil {
 		spanErr = err
@@ -206,9 +300,7 @@ func NewService(actions *extension.Actions, opts ...Option) Service {
 	s := &service{
 		actions:   actions,
 		converter: conv.NewConverter(options),
-		listener:  StdoutListener,
 	}
-
 	for _, o := range opts {
 		o(s)
 	}
