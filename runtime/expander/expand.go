@@ -18,20 +18,50 @@ func expand(value string, from map[string]interface{}) interface{} {
 		return value
 	}
 
-	// First, check if the entire string is a variable reference
-	if (strings.HasPrefix(value, "$") && !strings.Contains(value[1:], "$") && !strings.Contains(value, " ")) ||
-		(strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") && !strings.Contains(value[2:len(value)-1], "${")) {
+	// ------------------------------------------------------------------
+	// Fast-path: detect when the WHOLE string is merely a variable or an
+	// expression so that we can return typed values (ints, bools…) instead of
+	// their string interpolation form.  We deliberately keep the detection
+	// conservative – if the token contains any extra characters that make it a
+	// mixed literal (e.g. "${prefix}Key") we fall through to the general text
+	// interpolation logic below.
+	// ------------------------------------------------------------------
+
+	var pureVariable bool
+	if strings.HasPrefix(value, "$") && !strings.Contains(value, " ") && !strings.Contains(value, "${") {
+		// Regex ‑ ^$[identifier(.identifier|[idx])…]$
+		pureVariable = regexp.MustCompile(`^\$[a-zA-Z_][a-zA-Z0-9_\.\[\]]*$`).MatchString(value)
+	}
+
+	var pureBraced = strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") &&
+		!strings.Contains(value[2:len(value)-1], "${")
+
+	if pureVariable || pureBraced {
 		// Pure variable or expression replacement
 		if strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") {
 			expr := value[2 : len(value)-1]
 			if containsExpressionOperators(expr) {
-				return evaluator.Evaluate(expr, from)
+				// Try primary evaluator; fall back to array-aware evaluator if nil.
+				if val := evaluator.Evaluate(expr, from); val != nil {
+					return val
+				}
+				return evaluateWithArrayIndexing(expr, from)
 			}
-			return expandExpression(expr, from)
+			res := expandExpression(expr, from)
+			if res == nil {
+				// For ${var} style if var not found, return empty string rather than nil
+				return ""
+			}
+			return res
 		}
 		if strings.HasPrefix(value, "$") {
 			expr := value[1:]
-			return expandExpression(expr, from)
+			if expanded := expandExpression(expr, from); expanded != nil {
+				return expanded
+			}
+			// If not found keep original token intact – this matches behaviour in
+			// text replacements and is expected by tests.
+			return value
 		}
 	}
 
@@ -62,6 +92,30 @@ func expand(value string, from map[string]interface{}) interface{} {
 		// Convert the replacement to string for interpolation
 		replacementStr := stringifyValue(replacement)
 		result = result[:start] + replacementStr + result[end:]
+	}
+
+	// Fallback – the loop above may fail in certain edge-cases (e.g. when the
+	// very first token starts the string and is followed immediately by other
+	// characters, like "${prefix}Key").  In those cases the non-recursive
+	// brace matcher sometimes returns -1 which leaves the token unresolved.
+	// We run a simpler regexp-based substitution pass to ensure any remaining
+	// ${…} tokens are expanded.
+
+	if strings.Contains(result, "${") {
+		reBrace := regexp.MustCompile(`\$\{([^{}]+)\}`)
+		result = reBrace.ReplaceAllStringFunc(result, func(match string) string {
+			expr := match[2 : len(match)-1]
+			var replacement interface{}
+			if containsExpressionOperators(expr) {
+				replacement = evaluator.Evaluate(expr, from)
+				if replacement == nil {
+					replacement = evaluateWithArrayIndexing(expr, from)
+				}
+			} else {
+				replacement = expandExpression(expr, from)
+			}
+			return stringifyValue(replacement)
+		})
 	}
 
 	// Then process $var references
@@ -177,7 +231,19 @@ func expandExpression(expr string, from map[string]interface{}) interface{} {
 		switch c := current.(type) {
 		case map[string]interface{}:
 			if current, ok = c[parts[i]]; !ok {
-				return nil
+				// Fallback to case-insensitive lookup so that
+				// `${exec.Stdout}` can resolve a map key `stdout` that
+				// originated from JSON encoding.
+				for k, v := range c {
+					if strings.EqualFold(k, parts[i]) {
+						current = v
+						ok = true
+						break
+					}
+				}
+				if !ok {
+					return nil
+				}
 			}
 		default:
 			// Try to use reflection for structs and other types
@@ -421,6 +487,49 @@ func stringify(val interface{}) string {
 // hasExpr checks if a string contains any variable expression.
 func hasExpr(value string) bool {
 	return strings.Contains(value, "$")
+}
+
+// evaluateWithArrayIndexing attempts to evaluate simple arithmetic expressions
+// that include variables with array indexing (e.g. "values[0] + values[1]").
+// It operates by replacing every occurrence of a variable path (including any
+// [index] or .field navigation) with its concrete value obtained via
+// expandExpression, then delegating to the evaluator again.  This is a best
+// -effort fallback – if substitution fails for any token, the function returns
+// nil so the caller can preserve the original behaviour.
+func evaluateWithArrayIndexing(expr string, from map[string]interface{}) interface{} {
+	// Match variable paths that may include nested properties and array
+	// indexes, e.g. users[0].name or values[2]
+	reVar := regexp.MustCompile(`[a-zA-Z_][a-zA-Z0-9_]*(?:\[[0-9]+\])*(?:\.[a-zA-Z_][a-zA-Z0-9_]*(?:\[[0-9]+\])*)*`)
+
+	processed := reVar.ReplaceAllStringFunc(expr, func(token string) string {
+		// Evaluate the token against the context
+		val := expandExpression(token, from)
+		if val == nil {
+			// Leave token unchanged – evaluation will likely fail later, we
+			// will return nil overall.
+			return token
+		}
+		// Convert the value to a literal suitable for Go expression parser
+		switch v := val.(type) {
+		case int, int8, int16, int32, int64,
+			uint, uint8, uint16, uint32, uint64,
+			float32, float64:
+			return fmt.Sprintf("%v", v)
+		case bool:
+			return fmt.Sprintf("%v", v)
+		case string:
+			return fmt.Sprintf("\"%s\"", v)
+		default:
+			// unsupported type – keep as-is
+			return token
+		}
+	})
+
+	// Delegate to standard evaluator on the substituted expression
+	if processed == expr {
+		return nil
+	}
+	return evaluator.Evaluate(processed, from)
 }
 
 // Expand recursively traverses maps and slices, expanding any string containing variable references.

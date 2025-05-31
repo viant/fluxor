@@ -20,6 +20,15 @@ func TestExpand(t *testing.T) {
 			from:   map[string]interface{}{"foo": "bar"},
 			expect: "bar",
 		},
+		// new test for exec stdout case-insensitive
+		{
+			name:  "exec stdout case insensitive",
+			value: "${exec.Stdout}",
+			from: map[string]interface{}{
+				"exec": map[string]interface{}{"stdout": "running 0"},
+			},
+			expect: "running 0",
+		},
 		{
 			name:   "variable with curly braces",
 			value:  "${foo}",
@@ -72,7 +81,7 @@ func TestExpand(t *testing.T) {
 				"user": map[string]interface{}{"name": "John", "surname": "Smith"},
 				"key":  13,
 			},
-			expect: " Smith 13", // $user.name isn't handled correctly with simple syntax
+			expect: "John Smith 13",
 		},
 		{
 			name:  "deeply nested object property",

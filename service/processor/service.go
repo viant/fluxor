@@ -2,13 +2,15 @@ package processor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/policy"
-	execution2 "github.com/viant/fluxor/runtime/execution"
+	execution "github.com/viant/fluxor/runtime/execution"
+	"github.com/viant/fluxor/runtime/expander"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/executor"
 	"github.com/viant/fluxor/service/messaging"
@@ -44,10 +46,11 @@ func DefaultConfig() Config {
 // Service handles workflow execution
 type Service struct {
 	config           Config
-	processDAO       dao.Service[string, execution2.Process]
-	taskExecutionDao dao.Service[string, execution2.Execution]
+	processDAO       dao.Service[string, execution.Process]
+	taskExecutionDao dao.Service[string, execution.Execution]
+	sessListeners    []execution.StateListener
 
-	queue    messaging.Queue[execution2.Execution]
+	queue    messaging.Queue[execution.Execution]
 	executor executor.Service
 
 	// Track active executions
@@ -193,7 +196,7 @@ func (w *worker) run() {
 }
 
 // StartProcess begins execution of a workflow
-func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, init map[string]interface{}, customTasks ...string) (aProcess *execution2.Process, err error) {
+func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, init map[string]interface{}, customTasks ...string) (aProcess *execution.Process, err error) {
 	// start tracing span for process start
 	ctx, span := tracing.StartSpan(ctx, fmt.Sprintf("processor.StartProcess %s", workflow.Name), "INTERNAL")
 	defer tracing.EndSpan(span, err)
@@ -208,7 +211,8 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	span.WithAttributes(map[string]string{"process.id": processID})
 
 	// Create the process
-	aProcess = execution2.NewProcess(processID, workflow.Name, workflow, init)
+	aProcess = execution.NewProcess(processID, workflow.Name, workflow, init)
+	aProcess.Session.RegisterListeners(s.sessListeners...)
 
 	// Propagate policy (if any) from the incoming context so that executor can
 	// enforce it later on.
@@ -222,7 +226,7 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	aProcess.Span = procSpan
 
 	// If the incoming context contains a running parent process, record its ID
-	if parentProc := execution2.ContextValue[*execution2.Process](ctx); parentProc != nil {
+	if parentProc := execution.ContextValue[*execution.Process](ctx); parentProc != nil {
 		aProcess.ParentID = parentProc.ID
 	}
 
@@ -230,11 +234,11 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	if workflow.Init != nil {
 		aProcess.Session.ApplyParameters(workflow.Init)
 	}
-	anExecution := execution2.NewExecution(processID, nil, workflow.Pipeline)
+	anExecution := execution.NewExecution(processID, nil, workflow.Pipeline)
 	aProcess.Push(anExecution)
 
 	// Set aProcess state to running
-	aProcess.SetState(execution2.StateRunning)
+	aProcess.SetState(execution.StateRunning)
 
 	if err = s.processDAO.Save(ctx, aProcess); err != nil {
 		err = fmt.Errorf("failed to save process: %w", err)
@@ -245,7 +249,7 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 }
 
 // GetProcess retrieves a process by ID
-func (s *Service) GetProcess(ctx context.Context, processID string) (*execution2.Process, error) {
+func (s *Service) GetProcess(ctx context.Context, processID string) (*execution.Process, error) {
 	return s.processDAO.Load(ctx, processID)
 }
 
@@ -259,12 +263,12 @@ func (s *Service) PauseProcess(ctx context.Context, processID string) error {
 		return fmt.Errorf("process %s not found", processID)
 	}
 
-	if process.GetState() != execution2.StateRunning {
+	if process.GetState() != execution.StateRunning {
 		return fmt.Errorf("process %s is not in running state", processID)
 	}
 
 	// Update the process state to paused
-	process.SetState(execution2.StatePaused)
+	process.SetState(execution.StatePaused)
 	return s.processDAO.Save(ctx, process)
 }
 
@@ -278,18 +282,18 @@ func (s *Service) ResumeProcess(ctx context.Context, processID string) error {
 		return fmt.Errorf("process %s not found", processID)
 	}
 
-	if process.GetState() != execution2.StatePaused {
+	if process.GetState() != execution.StatePaused {
 		return fmt.Errorf("process %s is not in paused state", processID)
 	}
 
 	// Update the process state to running
-	process.SetState(execution2.StateRunning)
+	process.SetState(execution.StateRunning)
 	return s.processDAO.Save(ctx, process)
 	// Let the allocator schedule next tasks
 }
 
 // processMessage handles a single task execution message
-func (s *Service) processMessage(ctx context.Context, message messaging.Message[execution2.Execution]) (err error) {
+func (s *Service) processMessage(ctx context.Context, message messaging.Message[execution.Execution]) (err error) {
 
 	anExecution := message.T()
 
@@ -306,14 +310,14 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 	}
 
 	// Check if process is paused - if so, requeue the message for later processing
-	if process.GetState() == execution2.StatePaused {
+	if process.GetState() == execution.StatePaused {
 		// Don't mark as failed, just requeue with a delay
 		return message.Nack(fmt.Errorf("process is paused"))
 	}
 
 	// Ensure that the child execution receives information about the current process and execution
-	execCtx := context.WithValue(ctx, execution2.ProcessKey, process)
-	execCtx = context.WithValue(execCtx, execution2.ExecutionKey, anExecution)
+	execCtx := context.WithValue(ctx, execution.ProcessKey, process)
+	execCtx = context.WithValue(execCtx, execution.ExecutionKey, anExecution)
 
 	// Execute the task action.  Special-case ErrWaitForApproval which is a
 	// transitional state rather than a real failure.
@@ -331,7 +335,7 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 			anExecution.Attempts++
 			runAt := time.Now().Add(delay)
 			anExecution.RunAfter = &runAt
-			anExecution.State = execution2.TaskStateScheduled
+			anExecution.State = execution.TaskStateScheduled
 			if daoErr := s.taskExecutionDao.Save(ctx, anExecution); daoErr != nil {
 				return message.Nack(fmt.Errorf("error %w and failed to save execution: %v", err, daoErr))
 			}
@@ -358,7 +362,7 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 					}
 					// mark dependency in parent execution (if any)
 					if parent := proc.LookupExecution(inProc.ParentTaskID); parent != nil {
-						parent.Dependencies[inProc.TaskID] = execution2.TaskStateFailed
+						parent.Dependencies[inProc.TaskID] = execution.TaskStateFailed
 					}
 					// remove failed execution from the stack so that allocator can
 					// continue evaluating remaining tasks.
@@ -381,7 +385,7 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 		// ------------------------------------------------------------------
 		if proc, pErr := s.processDAO.Load(ctx, anExecution.ProcessID); pErr == nil && proc != nil {
 			if inProc := proc.LookupExecution(anExecution.TaskID); inProc != nil {
-				inProc.State = execution2.TaskStateFailed
+				inProc.State = execution.TaskStateFailed
 				inProc.Error = anExecution.Error
 			}
 
@@ -398,7 +402,7 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 			// Stop the workflow immediately – clear remaining work and mark the
 			// process as failed.
 			proc.Stack = nil
-			proc.SetState(execution2.StateFailed)
+			proc.SetState(execution.StateFailed)
 			_ = s.processDAO.Save(ctx, proc)
 		}
 
@@ -425,6 +429,86 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 	if err := s.taskExecutionDao.Save(ctx, anExecution); err != nil {
 		return message.Nack(err)
 	}
+
+	// ------------------------------------------------------------------
+	// Propagate success to parent process: mark dependencies, prune the stack
+	// and, if nothing else is pending, mark the whole process as completed.
+	// ------------------------------------------------------------------
+	if proc, pErr := s.processDAO.Load(ctx, anExecution.ProcessID); pErr == nil && proc != nil {
+		// ------------------------------------------------------------------
+		// Attach task output to session and evaluate post parameters so that
+		// subsequent tasks can reference the results of this execution.
+		// This logic duplicates the side-effects previously handled by the
+		// allocator service.  Keeping it here ensures that workflows which
+		// execute many tasks within the same process can immediately use the
+		// output values of the just-finished task without waiting for the
+		// allocator to revisit the execution.
+		// ------------------------------------------------------------------
+		if task := proc.LookupTask(anExecution.TaskID); task != nil {
+			if task.Namespace != "" && anExecution.Output != nil {
+				// Convert the typed output (potentially a struct) to a
+				// map[string]interface{} so that downstream expander logic can
+				// access fields dynamically using dot notation.
+				var outAsMap map[string]interface{}
+				if data, mErr := json.Marshal(anExecution.Output); mErr == nil {
+					_ = json.Unmarshal(data, &outAsMap)
+				}
+				if outAsMap == nil {
+					// Fallback – store the original value if the marshal
+					// conversion failed for some reason.
+					proc.Session.Set(task.Namespace, anExecution.Output)
+				} else {
+					proc.Session.Set(task.Namespace, outAsMap)
+				}
+
+				// ------------------------------------------------------------------
+				// Evaluate post-execution parameters (if any) in the same way
+				// allocator.handleTaskDone() does.
+				// ------------------------------------------------------------------
+				if len(task.Post) > 0 {
+					// Build a temporary session merging current state with the
+					// freshly produced output so that $Stdout etc. can be
+					// expanded.
+					src := proc.Session.Clone()
+					for k, v := range outAsMap {
+						src.Set(k, v)
+					}
+
+					for _, param := range task.Post {
+						expanded, expErr := expander.Expand(param.Value, src.State)
+						if expErr != nil {
+							// Skip parameter on error but continue processing –
+							// allocator will surface the error later.
+							continue
+						}
+						name := param.Name
+						if strings.HasSuffix(name, "[]") {
+							proc.Session.Append(strings.TrimSuffix(name, "[]"), expanded)
+							continue
+						}
+						proc.Session.Set(name, expanded)
+					}
+				}
+			}
+		}
+
+		if inProc := proc.LookupExecution(anExecution.TaskID); inProc != nil {
+			inProc.State = execution.TaskStateCompleted
+			inProc.CompletedAt = anExecution.CompletedAt
+			// reflect parent dependency ready
+			if parent := proc.LookupExecution(inProc.ParentTaskID); parent != nil {
+				parent.Dependencies[inProc.TaskID] = execution.TaskStateCompleted
+			}
+			proc.Remove(inProc)
+		}
+
+		// no more executions pending – workflow finished successfully
+		if len(proc.Stack) == 0 {
+			proc.SetState(execution.StateCompleted)
+		}
+		_ = s.processDAO.Save(ctx, proc)
+	}
+
 	return message.Ack()
 }
 
@@ -435,4 +519,8 @@ func (s *Service) Shutdown() {
 		worker.cancelFn()
 	}
 	s.workerWg.Wait()
+}
+
+func (s *Service) Listeners() []execution.StateListener {
+	return s.sessListeners
 }

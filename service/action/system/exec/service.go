@@ -10,6 +10,7 @@ import (
 	"github.com/viant/gosh/runner/local"
 	rssh "github.com/viant/gosh/runner/ssh"
 	"golang.org/x/crypto/ssh"
+	"time"
 
 	"github.com/viant/scy/cred/secret"
 	"strings"
@@ -66,7 +67,8 @@ func (s *Service) Execute(ctx context.Context, input *Input, output *Output) err
 		command := &Command{
 			Input: cmd,
 		}
-		stdout, stderr, exitCode := s.executeCommand(ctx, session, cmd)
+
+		stdout, stderr, exitCode := s.executeCommand(ctx, session, cmd, time.Duration(input.TimeoutMs)*time.Millisecond)
 		command.Output = stdout
 		command.Stderr = stderr
 		command.Status = exitCode
@@ -100,8 +102,15 @@ func (s *Service) Execute(ctx context.Context, input *Input, output *Output) err
 }
 
 // executeCommand runs a single command and returns its output
-func (s *Service) executeCommand(ctx context.Context, session *sessionInfo, command string) (string, string, int) {
-	stdout, status, err := session.service.Run(ctx, command)
+func (s *Service) executeCommand(ctx context.Context, session *sessionInfo, command string, duration time.Duration) (string, string, int) {
+
+	started := time.Now()
+	stdout, status, err := session.service.Run(ctx, command, runner.WithTimeout(int(duration.Milliseconds())))
+	elapsed := time.Now().Sub(started)
+	if elapsed > duration && err == nil {
+		err = fmt.Errorf("command %v timed out after: %s", command, elapsed)
+	}
+
 	if status == 0 {
 		return stdout, "", status
 	}

@@ -524,8 +524,7 @@ func (s *Service) Shutdown() {
 
 func (s *Service) handleProcessedExecution(ctx context.Context, process *execution.Process, anExecution *execution.Execution, state execution.TaskState) error {
 	currentTask := process.LookupTask(anExecution.TaskID)
-
-	if state == execution.TaskStateCompleted {
+	if state == execution.TaskStateCompleted && currentTask.Namespace != "" {
 		output := anExecution.Output
 		var outputMap = make(map[string]interface{})
 		if data, err := json.Marshal(anExecution.Output); err == nil {
@@ -533,7 +532,6 @@ func (s *Service) handleProcessedExecution(ctx context.Context, process *executi
 				output = outputMap
 			}
 		}
-
 		process.Session.Set(currentTask.Namespace, output)
 		err := s.handleTaskDone(currentTask, process, anExecution, outputMap)
 		if err != nil {
@@ -567,16 +565,18 @@ func (s *Service) handleTaskDone(currentTask *graph.Task, process *execution.Pro
 
 	for _, parameter := range currentTask.Post {
 		evaluated, err := expander.Expand(parameter.Value, source.State)
-		if err == nil {
-			name := parameter.Name
-			isAppend := strings.HasSuffix(name, "[]")
-			if isAppend {
-				process.Session.Append(strings.TrimRight(name, "[]"), evaluated)
-				continue
-			}
-			process.Session.Set(parameter.Name, evaluated)
+		if err != nil {
+			return fmt.Errorf("failed to expand post parameter %s: %w", parameter.Name, err)
 		}
+		name := parameter.Name
+		isAppend := strings.HasSuffix(name, "[]")
+		if isAppend {
+			process.Session.Append(strings.TrimRight(name, "[]"), evaluated)
+			continue
+		}
+		process.Session.Set(parameter.Name, evaluated)
 	}
+
 	if len(currentTask.Goto) > 0 {
 		// Evaluate transitions in order
 		for _, transition := range currentTask.Goto {

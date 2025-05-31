@@ -7,9 +7,22 @@ import (
 
 // Event envelope reused from the previous sketch.
 type Event struct {
-	Topic string      // "request.new" | "decision.new"
-	Data  interface{} // *Request or *Decision
+	Topic   string            // see topic constants below
+	Data    interface{}       // *Request | *Decision
+	Headers map[string]string `json:"headers,omitempty"` // optional – tenant, correlation-id etc.
 }
+
+// Standard event topics – keep old names for one transition cycle.
+const (
+	TopicRequestCreated  = "request.created"
+	TopicRequestUpdated  = "request.updated"
+	TopicRequestExpired  = "request.expired"
+	TopicDecisionCreated = "decision.created"
+
+	// legacy – used only for backward compatibility
+	LegacyTopicRequestNew  = "request.new"
+	LegacyTopicDecisionNew = "decision.new"
+)
 
 // Request represents a request for approval
 type Request struct {

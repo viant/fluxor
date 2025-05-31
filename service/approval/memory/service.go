@@ -71,7 +71,8 @@ func (s *service) RequestApproval(ctx context.Context, r *approval.Request) erro
 	// Idempotent save – overwrite any previous copy to handle re-submissions
 	// gracefully.
 	_ = s.reqDAO.Save(ctx, r)
-	_ = s.events.Publish(ctx, &approval.Event{Topic: "request.new", Data: r})
+	_ = s.events.Publish(ctx, &approval.Event{Topic: approval.TopicRequestCreated, Data: r})
+	_ = s.events.Publish(ctx, &approval.Event{Topic: approval.LegacyTopicRequestNew, Data: r})
 	return nil
 }
 
@@ -103,33 +104,47 @@ func (s *service) Decide(ctx context.Context, id string,
 		return nil, fmt.Errorf("already decided")
 	}
 
-	anExecution, err := s.executionDao.Load(ctx, request.ExecutionID)
-	if err != nil {
-		return nil, err
-	}
-	anExecution.Approved = &ok
-	anExecution.ApprovalReason = reason
-	if !ok {
-		anExecution.Error = fmt.Sprintf("action %s rejected: %s", request.Action, reason)
-	} else {
-		anExecution.Error = ""
-	}
-	// Reset execution State so that allocator re-schedules it.
-	anExecution.State = execution.TaskStatePending
-	if err = s.executionDao.Save(ctx, anExecution); err != nil {
-		return nil, err
-	}
+	//--------------------------------------------------------------------------------
+	// If the service has been initialised with an execution DAO and the request is
+	// linked to a concrete execution (ExecutionID != ""), update the execution so
+	// that the allocator can re-schedule or skip it accordingly.
+	//
+	// The DAO is optional because the approval service can be used as a standalone
+	// component (e.g. to gate generic LLM tool invocations) where no execution
+	// tracking exists.  In such cases we silently skip the execution update step.
+	//--------------------------------------------------------------------------------
 
-	// ------------------------------------------------------------------
-	// Update the parent process copy so that allocator sees the change.
-	// ------------------------------------------------------------------
-	if s.processDao != nil {
-		if proc, pErr := s.processDao.Load(ctx, request.ProcessID); pErr == nil && proc != nil {
-			if ex := proc.LookupExecution(anExecution.TaskID); ex != nil {
-				ex.Approved = anExecution.Approved
-				ex.ApprovalReason = reason
-				ex.State = execution.TaskStatePending
-				_ = s.processDao.Save(ctx, proc)
+	if s.executionDao != nil && request.ExecutionID != "" {
+		anExecution, err := s.executionDao.Load(ctx, request.ExecutionID)
+		if err != nil {
+			return nil, err
+		}
+
+		anExecution.Approved = &ok
+		anExecution.ApprovalReason = reason
+		if !ok {
+			anExecution.Error = fmt.Sprintf("action %s rejected: %s", request.Action, reason)
+		} else {
+			anExecution.Error = ""
+		}
+		// Reset execution State so that allocator re-schedules it.
+		anExecution.State = execution.TaskStatePending
+
+		if err = s.executionDao.Save(ctx, anExecution); err != nil {
+			return nil, err
+		}
+
+		// ------------------------------------------------------------------
+		// Update the parent process copy so that allocator sees the change.
+		// ------------------------------------------------------------------
+		if s.processDao != nil {
+			if proc, pErr := s.processDao.Load(ctx, request.ProcessID); pErr == nil && proc != nil {
+				if ex := proc.LookupExecution(anExecution.TaskID); ex != nil {
+					ex.Approved = anExecution.Approved
+					ex.ApprovalReason = reason
+					ex.State = execution.TaskStatePending
+					_ = s.processDao.Save(ctx, proc)
+				}
 			}
 		}
 	}
@@ -141,7 +156,8 @@ func (s *service) Decide(ctx context.Context, id string,
 		DecidedAt: time.Now(),
 	}
 	_ = s.decDAO.Save(ctx, d)
-	_ = s.events.Publish(ctx, &approval.Event{Topic: "decision.new", Data: d})
+	_ = s.events.Publish(ctx, &approval.Event{Topic: approval.TopicDecisionCreated, Data: d})
+	_ = s.events.Publish(ctx, &approval.Event{Topic: approval.LegacyTopicDecisionNew, Data: d})
 	return d, nil
 }
 

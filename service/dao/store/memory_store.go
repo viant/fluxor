@@ -40,6 +40,22 @@ func (s *MemoryStore[K, T]) Save(_ context.Context, v *T) error {
 	key := s.keySelector(v)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if existing, ok := s.records[key]; ok && existing != nil {
+		// Preserve pointer identity so that callers holding a previous reference
+		// continue to see updates.  Prefer custom CopyFrom method to avoid
+		// copying sync.Mutex or other unexported fields.
+
+		type copyable interface{ CopyFrom(any) }
+
+		if c, ok := any(existing).(copyable); ok {
+			c.CopyFrom(v)
+		} else {
+			*existing = *v // best-effort fallback – may copy mutexes
+		}
+		return nil
+	}
+
 	s.records[key] = v
 	return nil
 }

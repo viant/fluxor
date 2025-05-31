@@ -19,13 +19,37 @@ type Session struct {
 	imports   model.Imports
 	converter *conv.Converter
 	mu        sync.RWMutex
+
+	listeners []StateListener // invoked on Set
+}
+
+// StateListener is invoked every time Session.Set overwrites an existing key
+// or inserts a new one.
+type StateListener func(s *Session, key string, oldVal, newVal interface{})
+
+// RegisterListeners attaches a callback that will be called on every Set.
+// The call is made synchronously while the session mutex is held, therefore
+// listeners MUST return quickly and must not call back into Session to avoid
+// deadlocks.
+func (s *Session) RegisterListeners(fn ...StateListener) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.listeners = append(s.listeners, fn...)
 }
 
 // Set adds or updates a parameter in the session
 func (s *Session) Set(key string, value interface{}) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	old := s.State[key]
 	s.State[key] = value
+	s.mu.Unlock()
+
+	for _, fn := range s.listeners {
+		fn(s, key, old, value)
+	}
 }
 
 // Get retrieves a parameter from the session
@@ -79,6 +103,10 @@ func (s *Session) Append(key string, value interface{}) {
 
 func (s *Session) TaskSession(from map[string]interface{}, options ...Option) *Session {
 	ret := NewSession(s.ID, options...)
+
+	if len(s.listeners) > 0 {
+		ret.listeners = s.listeners
+	}
 
 	for k, v := range from {
 		ret.State[k] = v
@@ -155,6 +183,7 @@ func (s *Session) Clone() *Session {
 	defer s.mu.RUnlock()
 
 	clone := NewSession(s.ID)
+	clone.listeners = append(clone.listeners, s.listeners...)
 	for k, v := range s.State {
 		clone.State[k] = v
 	}

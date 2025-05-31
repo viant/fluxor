@@ -84,6 +84,11 @@ func (w *Workflow) Validate() []error {
 	}
 
 	walk(w.Pipeline)
+	// Include named dependencies declared at the root level so that tasks within
+	// the main pipeline can reference them via `dependsOn`.
+	for _, dep := range w.Dependencies {
+		walk(dep)
+	}
 
 	// After collecting all tasks, verify each dependency / goto exists.
 	var check func(*graph.Task)
@@ -107,6 +112,9 @@ func (w *Workflow) Validate() []error {
 	}
 
 	check(w.Pipeline)
+	for _, dep := range w.Dependencies {
+		check(dep)
+	}
 
 	// -----------------------------------------------------------------
 	// 3. Detect dependency cycles & unreachable tasks

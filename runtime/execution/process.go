@@ -76,6 +76,29 @@ type Process struct {
 	allTasks         map[string]*graph.Task // Cached all tasks
 }
 
+// CopyFrom updates exported, mutex-independent fields from src.  It intentionally
+// skips sync.Mutex as copying it would corrupt internal state.
+func (p *Process) CopyFrom(src any) {
+	other, ok := src.(*Process)
+	if !ok || other == nil || p == other {
+		return
+	}
+
+	// Keep mutex locked while mutating to avoid races.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.SCN = other.SCN
+	p.State = other.State
+	p.UpdatedAt = other.UpdatedAt
+	p.FinishedAt = other.FinishedAt
+	p.Stack = other.Stack
+	p.Errors = other.Errors
+	p.ActiveTaskCount = other.ActiveTaskCount
+	p.ActiveTaskGroups = other.ActiveTaskGroups
+	// Fields like Session, Workflow, etc. are immutable references – no copy.
+}
+
 type Wait func(ctx context.Context, timeout time.Duration) (*ProcessOutput, error)
 
 type ProcessOutput struct {
@@ -143,15 +166,20 @@ func (p *Process) Push(executions ...*Execution) {
 func (p *Process) Remove(anExecution *Execution) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if len(p.Stack) == 0 {
+	if len(p.Stack) == 0 || anExecution == nil {
 		return
 	}
-	var newStack []*Execution
-	for i := 0; i < len(p.Stack)-1; i++ {
-		if p.Stack[i].ID != anExecution.ID {
-			newStack = append(newStack, p.Stack[i])
+
+	// Filter-copy preserving order; this correctly handles removal of any
+	// element including the last.
+	newStack := p.Stack[:0] // reuse underlying array where possible
+	for _, exec := range p.Stack {
+		if exec.ID != anExecution.ID {
+			newStack = append(newStack, exec)
 		}
 	}
+	// In case every element was removed we still assign an empty slice to
+	// avoid holding references.
 	p.Stack = newStack
 }
 

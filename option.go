@@ -3,7 +3,7 @@ package fluxor
 import (
 	"github.com/viant/afs/storage"
 	"github.com/viant/fluxor/model/types"
-	execution2 "github.com/viant/fluxor/runtime/execution"
+	execution "github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/approval"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/event"
@@ -53,7 +53,7 @@ func WithExtensionServices(services ...types.Service) Option {
 }
 
 // WithQueue sets the message queue
-func WithQueue(queue messaging.Queue[execution2.Execution]) Option {
+func WithQueue(queue messaging.Queue[execution.Execution]) Option {
 	return func(s *Service) {
 		s.queue = queue
 	}
@@ -67,14 +67,14 @@ func WithRootTaskNodeName(name string) Option {
 }
 
 // WithProcessDAO sets the processor DAO
-func WithProcessDAO(dao dao.Service[string, execution2.Process]) Option {
+func WithProcessDAO(dao dao.Service[string, execution.Process]) Option {
 	return func(s *Service) {
 		s.runtime.processorDAO = dao
 	}
 }
 
 // WithTaskExecutionDAO sets the task execution DAO
-func WithTaskExecutionDAO(dao dao.Service[string, execution2.Execution]) Option {
+func WithTaskExecutionDAO(dao dao.Service[string, execution.Execution]) Option {
 	return func(s *Service) {
 		s.runtime.taskExecutionDao = dao
 	}
@@ -124,5 +124,11 @@ func WithTracing(serviceName, serviceVersion, outputFile string) Option {
 func WithTracingExporter(serviceName, serviceVersion string, exporter sdktrace.SpanExporter) Option {
 	return func(s *Service) {
 		_ = tracing.InitWithExporter(serviceName, serviceVersion, exporter)
+	}
+}
+
+func WithStateListeners(listeners ...execution.StateListener) Option {
+	return func(s *Service) {
+		s.stateListeners = listeners
 	}
 }

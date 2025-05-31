@@ -1,7 +1,7 @@
 package processor
 
 import (
-	execution2 "github.com/viant/fluxor/runtime/execution"
+	execution "github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/executor"
 	"github.com/viant/fluxor/service/messaging"
@@ -11,20 +11,20 @@ import (
 type Option func(*Service)
 
 // WithProcessDAO sets the process store implementation
-func WithProcessDAO(processDAO dao.Service[string, execution2.Process]) Option {
+func WithProcessDAO(processDAO dao.Service[string, execution.Process]) Option {
 	return func(s *Service) {
 		s.processDAO = processDAO
 	}
 }
 
-func WithTaskExecutionDAO(taskExecutionDao dao.Service[string, execution2.Execution]) Option {
+func WithTaskExecutionDAO(taskExecutionDao dao.Service[string, execution.Execution]) Option {
 	return func(s *Service) {
 		s.taskExecutionDao = taskExecutionDao
 	}
 }
 
 // WithMessageQueue sets the message queue implementation
-func WithMessageQueue(queue messaging.Queue[execution2.Execution]) Option {
+func WithMessageQueue(queue messaging.Queue[execution.Execution]) Option {
 	return func(s *Service) {
 		s.queue = queue
 	}
@@ -48,6 +48,17 @@ func WithWorkers(count int) Option {
 func WithExecutor(executor executor.Service) Option {
 	return func(s *Service) {
 		s.executor = executor
+	}
+}
+
+// WithSessionListeners registers immutable state listeners that will be copied
+// to every Session created during task execution.
+func WithSessionListeners(fns ...execution.StateListener) Option {
+	return func(s *Service) {
+		if len(fns) == 0 {
+			return
+		}
+		s.sessListeners = append(s.sessListeners, fns...)
 	}
 }
 

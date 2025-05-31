@@ -59,7 +59,10 @@ func (s *Service) wait(ctx context.Context, in, out interface{}) error {
 	}
 
 	poolFrequency := time.Millisecond * time.Duration(input.PoolFrequencyInMs)
-	expiry := time.Now().Add(time.Millisecond * time.Duration(input.TimeoutInMs))
+	var expiry time.Time
+	if input.TimeoutInMs > 0 {
+		expiry = time.Now().Add(time.Millisecond * time.Duration(input.TimeoutInMs))
+	}
 
 	//Always populate process ID so that caller can correlate the result even
 	//when the workflow finishes with an error or times-out.
@@ -71,13 +74,22 @@ outer:
 		if err != nil {
 			return err
 		}
-		switch process.State {
-		case execution.StateCompleted, execution.StateFailed:
+		// Finished when state completed/failed OR no remaining executions.
+		if process.State == execution.StateCompleted || process.State == execution.StateFailed {
+			break outer // done
+		}
+		if len(process.Stack) == 0 {
+			// allocator might still flip state; give it one more poll to persist.
+			// Mark state as completed locally to unblock callers; we'll re-load
+			// latest state after breaking.
 			break outer
 		}
-		if time.Now().After(expiry) {
+
+		if !expiry.IsZero() && time.Now().After(expiry) {
 			output.Timeout = true
-			break outer
+			// do NOT break immediately – perform a final reload to see if process
+			// actually finished meanwhile. Continue the loop one last time.
+			// This handles races with allocator on slow/debug runs.
 		}
 		time.Sleep(poolFrequency)
 
@@ -86,7 +98,14 @@ outer:
 	if err != nil {
 		return err
 	}
-	output.State = process.State
+
+	// If allocator has finished all executions but hasn't persisted the final
+	// state yet, treat the workflow as completed.
+	if len(process.Stack) == 0 && process.State == execution.StateRunning {
+		output.State = execution.StateCompleted
+	} else {
+		output.State = process.State
+	}
 	output.Output = process.Session.State
 	output.Errors = process.Errors
 	finishedAt := process.FinishedAt

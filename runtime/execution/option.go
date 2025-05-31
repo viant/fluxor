@@ -36,3 +36,14 @@ func WithState(state map[string]interface{}) Option {
 		}
 	}
 }
+
+// WithStateListeners attaches immutable listeners to the created session.
+// The slice is copied; callers can reuse their backing array.
+func WithStateListeners(listeners ...StateListener) Option {
+	return func(session *Session) {
+		if len(listeners) == 0 {
+			return
+		}
+		session.listeners = append(session.listeners, listeners...)
+	}
+}

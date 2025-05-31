@@ -28,7 +28,11 @@ func (s *Service) Save(_ context.Context, p *execution.Process) error {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 
-	s.processes[p.ID] = p.Clone()
+	if existing, ok := s.processes[p.ID]; ok && existing != nil {
+		existing.CopyFrom(p)
+	} else {
+		s.processes[p.ID] = p
+	}
 	return nil
 }
 
@@ -44,7 +48,7 @@ func (s *Service) Load(_ context.Context, id string) (*execution.Process, error)
 	if !ok {
 		return nil, dao.ErrNotFound
 	}
-	return p.Clone(), nil
+	return p, nil
 }
 
 func (s *Service) Delete(_ context.Context, id string) error {
@@ -71,7 +75,7 @@ func (s *Service) List(_ context.Context, parameters ...*dao.Parameter) ([]*exec
 		if !criteria.FilterByState(p.State, parameters) {
 			continue
 		}
-		out = append(out, p.Clone())
+		out = append(out, p)
 	}
 	return out, nil
 }

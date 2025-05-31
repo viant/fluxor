@@ -11,6 +11,9 @@ pipeline:
     input:
       commands:
         - echo 'running $x'
+    post:
+      output: $Stdout
+
   info:
     action: printer:print
     input:

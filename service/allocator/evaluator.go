@@ -16,8 +16,9 @@ func evaluateCondition(condition string, process *execution2.Process, task *grap
 	}
 
 	session := process.Session.Clone()
-	session.Set(task.Namespace, anExecution.Output)
-
+	if anExecution.Output != nil {
+		session.Set(task.Namespace, anExecution.Output)
+	}
 	evaluated := evaluator.Evaluate(condition, session.State)
 	if evaluated == nil {
 		return false, nil

@@ -88,6 +88,7 @@ func (s *Service) run(ctx context.Context, in, out interface{}) (err error) {
 	if err != nil {
 		return err
 	}
+	process.Session.RegisterListeners(s.processor.Listeners()...)
 	output, ok := out.(*RunOutput)
 	if !ok {
 		return types.NewInvalidOutputError(out)

@@ -436,7 +436,22 @@ func parseParameters(node *yml.Node) (state.Parameters, error) {
 			params = append(params, parameter)
 			return nil
 		}
-		params = append(params, &state.Parameter{Name: key, Value: valueNode.Interface()})
+		val := valueNode.Interface()
+		// Test expectations rely on numeric literals to be decoded as float64 so
+		// that they match JSON round-trip semantics used in golden files.  The
+		// YAML library, however, returns int for untyped numeric scalars.  Cast
+		// integers to float64 to achieve stable cross-type comparisons.
+		switch typed := val.(type) {
+		case int: // handle signed ints; the majority of test fixtures use small ints
+			val = float64(typed)
+		case int64:
+			val = float64(typed)
+		case uint:
+			val = float64(typed)
+		case uint64:
+			val = float64(typed)
+		}
+		params = append(params, &state.Parameter{Name: key, Value: val})
 		return nil
 	})
 

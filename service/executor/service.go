@@ -71,6 +71,22 @@ func WithListener(l Listener) Option {
 	}
 }
 
+// WithApprovalSkipPrefixes configures the executor so that actions whose fully
+// qualified name (service.method, lower-cased) starts with any of the
+// specified prefixes will bypass the approval request in policy ModeAsk.
+func WithApprovalSkipPrefixes(prefixes ...string) Option {
+	lower := make([]string, 0, len(prefixes))
+	for _, p := range prefixes {
+		if p == "" {
+			continue
+		}
+		lower = append(lower, strings.ToLower(p))
+	}
+	return func(s *service) {
+		s.skipPrefixes = append(s.skipPrefixes, lower...)
+	}
+}
+
 // Service represents a task executor.
 type Service interface {
 	Execute(ctx context.Context, execution *execution.Execution, process *execution.Process) error
@@ -82,6 +98,12 @@ type service struct {
 	converter *conv.Converter
 	listener  Listener
 	approval  approval.Service
+
+	// skipPrefixes defines service/method prefixes (lower-case, e.g.
+	// "system.storage" or "printer.") that are executed automatically even
+	// when the workflow policy mode is "ask" – no approval request is
+	// generated.
+	skipPrefixes []string
 }
 
 // Execute executes a task.
@@ -198,10 +220,16 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 			// and pause execution until we get the answer.
 			// ------------------------------------------------------------------
 
-			var argMap map[string]interface{}
-			if m, ok := action.Input.(map[string]interface{}); ok {
-				argMap = m
+			// Executor-level override: some actions (e.g. internal logging) may be
+			// deemed safe and therefore bypass approval even when the workflow
+			// Policy is in ask mode.
+			if s.shouldSkipApproval(actionName) {
+				break // continue with automatic execution
 			}
+
+			// Build a concrete, expanded copy of the action input so that the
+			// approval request contains the real values rather than template
+			// placeholders.
 
 			if s.approval != nil {
 				// Start tracing span for approval request
@@ -211,7 +239,21 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 					"execution.id": anExecution.ID,
 					"action":       actionName,
 				})
-				data, _ := json.Marshal(argMap)
+
+				// Attempt to expand any placeholders using the same logic that will be
+				// applied during actual execution after the approval arrives.  This
+				// gives reviewers full visibility into the concrete arguments rather
+				// than the raw template.
+				expandedArgs := action.Input
+				sess := process.Session.TaskSession(anExecution.Data,
+					execution.WithConverter(s.converter),
+					execution.WithImports(process.Workflow.Imports...),
+					execution.WithTypes(s.actions.Types()))
+				if v, err := sess.Expand(action.Input); err == nil {
+					expandedArgs = v
+				}
+
+				data, _ := json.Marshal(expandedArgs)
 				// Use execution ID as the unique identifier for the approval request
 				// unless the caller supplies another value. This guarantees that every
 				// wait-for-approval state generates a retrievable request so that the
@@ -285,6 +327,20 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 
 	anExecution.Output = output
 	return nil
+}
+
+// shouldSkipApproval returns true when actionName (already lower-cased) starts
+// with any configured prefix.
+func (s *service) shouldSkipApproval(actionName string) bool {
+	if len(s.skipPrefixes) == 0 {
+		return false
+	}
+	for _, p := range s.skipPrefixes {
+		if strings.HasPrefix(actionName, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // NewService creates a new executor service instance.

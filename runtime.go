@@ -3,7 +3,7 @@ package fluxor
 import (
 	"context"
 	"github.com/viant/fluxor/model"
-	execution2 "github.com/viant/fluxor/runtime/execution"
+	execution "github.com/viant/fluxor/runtime/execution"
 	aworkflow "github.com/viant/fluxor/service/action/workflow"
 	"github.com/viant/fluxor/service/allocator"
 	"github.com/viant/fluxor/service/dao"
@@ -16,8 +16,8 @@ import (
 type Runtime struct {
 	workflowService  *aworkflow.Service
 	workflowDAO      *workflow.Service
-	processorDAO     dao.Service[string, execution2.Process]
-	taskExecutionDao dao.Service[string, execution2.Execution]
+	processorDAO     dao.Service[string, execution.Process]
+	taskExecutionDao dao.Service[string, execution.Execution]
 	processor        *processor.Service
 	allocator        *allocator.Service
 }
@@ -33,17 +33,17 @@ func (r *Runtime) DecodeYAMLWorkflow(data []byte) (*model.Workflow, error) {
 }
 
 // StartProcess starts a new process
-func (r *Runtime) StartProcess(ctx context.Context, aWorkflow *model.Workflow, initialState map[string]interface{}, tasks ...string) (*execution2.Process, execution2.Wait, error) {
+func (r *Runtime) StartProcess(ctx context.Context, aWorkflow *model.Workflow, initialState map[string]interface{}, tasks ...string) (*execution.Process, execution.Wait, error) {
 	process, err := r.processor.StartProcess(ctx, aWorkflow, initialState, tasks...)
 	if err != nil {
 		return nil, nil, err
 	}
-	wait := func(ctx context.Context, timeout time.Duration) (*execution2.ProcessOutput, error) {
+	wait := func(ctx context.Context, timeout time.Duration) (*execution.ProcessOutput, error) {
 		output, err := r.workflowService.WaitForProcess(ctx, process.ID, int(timeout.Milliseconds()))
 		if err != nil {
 			return nil, err
 		}
-		return (*execution2.ProcessOutput)(output), nil
+		return (*execution.ProcessOutput)(output), nil
 	}
 	return process, wait, nil
 }
@@ -63,21 +63,21 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 }
 
 // Process returns a process
-func (r *Runtime) Process(ctx context.Context, id string) (*execution2.Process, error) {
+func (r *Runtime) Process(ctx context.Context, id string) (*execution.Process, error) {
 	return r.processorDAO.Load(ctx, id)
 }
 
 // Execution returns an execution
-func (r *Runtime) Execution(ctx context.Context, id string) (*execution2.Execution, error) {
+func (r *Runtime) Execution(ctx context.Context, id string) (*execution.Execution, error) {
 	return r.taskExecutionDao.Load(ctx, id)
 }
 
 // Processes saves execution
-func (r *Runtime) SaveExecution(ctx context.Context, anExecution *execution2.Execution) error {
+func (r *Runtime) SaveExecution(ctx context.Context, anExecution *execution.Execution) error {
 	return r.taskExecutionDao.Save(ctx, anExecution)
 }
 
 // Processes returns a list of processes
-func (r *Runtime) Processes(ctx context.Context, parameter ...*dao.Parameter) ([]*execution2.Process, error) {
+func (r *Runtime) Processes(ctx context.Context, parameter ...*dao.Parameter) ([]*execution.Process, error) {
 	return r.processorDAO.List(ctx, parameter...)
 }

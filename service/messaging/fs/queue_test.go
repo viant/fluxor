@@ -19,7 +19,10 @@ type TestPayload struct {
 
 func TestQueue(t *testing.T) {
 	// Create temp directory for queue
-	tempDir, err := os.MkdirTemp("/tmp", "queue-test")
+	// Use the system temporary directory instead of hard-coding /tmp so that
+	// the tests run on platforms/environments where writing to /tmp is not
+	// permitted (e.g. macOS sandbox, Windows, restricted CI runners).
+	tempDir, err := os.MkdirTemp("", "queue-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}

@@ -13,3 +13,5 @@ pipeline:
             method: print
             input:
               message: "$order"
+          post:
+            message: $message
