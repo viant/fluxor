@@ -45,11 +45,15 @@ func (p *Process) RegisterTask(t *graph.Task) {
 
 // Process state constants
 const (
-	StatePending   = "pending"
-	StateRunning   = "running"
-	StatePaused    = "paused"
-	StateCompleted = "completed"
-	StateFailed    = "failed"
+	StatePending         = "pending"
+	StateRunning         = "running"
+	StatePauseRequested  = "pauseRequested"
+	StatePaused          = "paused"
+	StateResumeRequested = "resumeRequested"
+	StateCancelRequested = "cancelRequested"
+	StateCancelled       = "cancelled"
+	StateCompleted       = "completed"
+	StateFailed          = "failed"
 )
 
 // Process represents a workflow execution instance
@@ -67,7 +71,13 @@ type Process struct {
 	Stack      []*Execution      `json:"stack,omitempty"`
 	Errors     map[string]string `json:"errors,omitempty"`
 	Span       *tracing.Span     `json:"-"`
-	Mode       string            `json:"mode"` //debug
+	// Cancel/Pause handling
+	CancelReason string             `json:"cancelReason,omitempty"`
+	Ctx          context.Context    `json:"-"`
+	cancel       context.CancelFunc `json:"-"`
+	PausedAt     *time.Time         `json:"pausedAt,omitempty"`
+	ResumedAt    *time.Time         `json:"resumedAt,omitempty"`
+	Mode         string             `json:"mode"` //debug
 	// For serverless environments
 	ActiveTaskCount  int                    `json:"activeTaskCount"`
 	ActiveTaskGroups map[string]bool        `json:"activeTaskGroups"`
@@ -156,7 +166,9 @@ func (p *Process) AllTasks() map[string]*graph.Task {
 }
 
 // NewProcess creates a new process
+
 func NewProcess(id string, name string, workflow *model.Workflow, initialState map[string]interface{}) *Process {
+	ctx, cancel := context.WithCancel(context.Background())
 	now := time.Now()
 	if initialState == nil {
 		initialState = make(map[string]interface{})
@@ -169,6 +181,8 @@ func NewProcess(id string, name string, workflow *model.Workflow, initialState m
 		CreatedAt:        now,
 		UpdatedAt:        now,
 		Session:          NewSession(id, WithState(initialState)),
+		Ctx:              ctx,
+		cancel:           cancel,
 		ActiveTaskCount:  0,
 		ActiveTaskGroups: make(map[string]bool),
 		Errors:           make(map[string]string),
@@ -218,6 +232,17 @@ func (p *Process) GetState() string {
 	return p.State
 }
 
+// CancelCtx cancels the internal context so that any in-flight task that is
+// using it can abort early.  Safe to call multiple times.
+func (p *Process) CancelCtx() {
+	if p == nil {
+		return
+	}
+	if p.cancel != nil {
+		p.cancel()
+	}
+}
+
 // SetState updates the process state
 func (p *Process) SetState(state string) {
 	p.mu.Lock()
@@ -232,6 +257,15 @@ func (p *Process) SetState(state string) {
 		p.FinishedAt = &now
 	case StatePaused:
 		// Do nothing
+	case StateCancelled:
+		now := time.Now()
+		p.FinishedAt = &now
+	case StateCancelRequested:
+		// keep running until tasks drain
+	case StatePauseRequested:
+		// No specific action here
+	case StateResumeRequested:
+		// No specific action here
 	}
 	p.UpdatedAt = time.Now()
 }

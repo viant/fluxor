@@ -292,6 +292,31 @@ func (s *Service) ResumeProcess(ctx context.Context, processID string) error {
 	// Let the allocator schedule next tasks
 }
 
+// CancelProcess requests cancellation of a running or paused process. It marks
+// the process as cancelRequested and propagates context cancellation so that
+// any in-flight task can terminate early.  The allocator will move the process
+// to the final "cancelled" state once the current stack is drained.
+func (s *Service) CancelProcess(ctx context.Context, processID string, reason string) error {
+	process, err := s.processDAO.Load(ctx, processID)
+	if err != nil {
+		return fmt.Errorf("failed to load process: %w", err)
+	}
+	if process == nil {
+		return fmt.Errorf("process %s not found", processID)
+	}
+
+	state := process.GetState()
+	if state == execution.StateCancelled {
+		return nil // already cancelled
+	}
+
+	// Set cancel flag and cancel context to interrupt running tasks.
+	process.CancelCtx()
+	process.CancelReason = reason
+	process.SetState(execution.StateCancelRequested)
+	return s.processDAO.Save(ctx, process)
+}
+
 // processMessage handles a single task execution message
 func (s *Service) processMessage(ctx context.Context, message messaging.Message[execution.Execution]) (err error) {
 
@@ -314,9 +339,21 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 		// Don't mark as failed, just requeue with a delay
 		return message.Nack(fmt.Errorf("process is paused"))
 	}
+	// If cancellation has been requested, do not continue executing this task –
+	// acknowledge so that allocator can eventually mark the process as
+	// cancelled once the queue drains.
+	if process.GetState() == execution.StateCancelRequested {
+		return message.Ack()
+	}
 
-	// Ensure that the child execution receives information about the current process and execution
-	execCtx := context.WithValue(ctx, execution.ProcessKey, process)
+	// Derive execution context from the per-process context so that cancellation
+	// requests propagate to running tasks. Fall back to incoming ctx if the
+	// stored context is nil (e.g. legacy processes loaded from store).
+	baseCtx := process.Ctx
+	if baseCtx == nil {
+		baseCtx = ctx
+	}
+	execCtx := context.WithValue(baseCtx, execution.ProcessKey, process)
 	execCtx = context.WithValue(execCtx, execution.ExecutionKey, anExecution)
 
 	// Execute the task action.  Special-case ErrWaitForApproval which is a

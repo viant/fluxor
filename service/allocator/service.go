@@ -18,6 +18,18 @@ import (
 	"time"
 )
 
+func findCatchTask(parent *graph.Task) *graph.Task {
+	if parent == nil {
+		return nil
+	}
+	for _, st := range parent.Tasks {
+		if strings.EqualFold(st.Name, "catch") {
+			return st
+		}
+	}
+	return nil
+}
+
 // toInterfaceSlice converts an array or slice value to a []interface{}.
 func toInterfaceSlice(raw interface{}) ([]interface{}, error) {
 	v := reflect.ValueOf(raw)
@@ -142,7 +154,7 @@ func (s *Service) handleTransition(ctx context.Context, processID string, fromTa
 // allocateTasks finds processes that need tasks and allocates them
 func (s *Service) allocateTasks(ctx context.Context) error {
 	// Get all processes
-	processes, err := s.processDAO.List(ctx, dao.NewParameter("State", execution.StatePending, execution.StateRunning))
+	processes, err := s.processDAO.List(ctx, dao.NewParameter("State", execution.StatePending, execution.StateRunning, execution.StateCancelRequested))
 	if err != nil {
 		return fmt.Errorf("failed to list processes: %w", err)
 	}
@@ -150,7 +162,16 @@ func (s *Service) allocateTasks(ctx context.Context) error {
 	// Process each running workflow
 	for _, process := range processes {
 		// Skip processes that aren't running
-		if process.GetState() != execution.StateRunning {
+		state := process.GetState()
+		if state == execution.StateCancelRequested {
+			// If there are no active tasks left we can mark the process as cancelled.
+			if len(process.Stack) == 0 || process.GetActiveTaskCount() == 0 {
+				process.SetState(execution.StateCancelled)
+				_ = s.processDAO.Save(ctx, process)
+			}
+			continue // never schedule more work
+		}
+		if state != execution.StateRunning {
 			continue
 		}
 
@@ -551,6 +572,20 @@ func (s *Service) handleProcessedExecution(ctx context.Context, process *executi
 	parent := process.LookupExecution(anExecution.ParentTaskID)
 	if parent != nil {
 		process.SetDep(parent, anExecution.TaskID, state)
+
+		// if child failed schedule parent catch task if any
+		if state == execution.TaskStateFailed {
+			if catchTask := findCatchTask(process.LookupTask(parent.TaskID)); catchTask != nil {
+				if depState, ok := process.GetDep(parent, catchTask.ID); !ok || depState == execution.TaskStatePending {
+					newExec := execution.NewExecution(process.ID, process.LookupTask(parent.TaskID), catchTask)
+					process.SetDep(parent, catchTask.ID, execution.TaskStateScheduled)
+					process.Push(newExec)
+					process.Session.Set("_lastError", anExecution.Error)
+					process.Session.Set("_lastErrorTask", anExecution.TaskID)
+					process.Session.Set("_lastErrorProcess", anExecution.ProcessID)
+				}
+			}
+		}
 
 		// If the task triggered a goto jump we skip all remaining sibling tasks
 		// (those that come after the current one in the parent's task list) so

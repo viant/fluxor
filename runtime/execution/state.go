@@ -18,6 +18,8 @@ const (
 	TaskStatePaused          TaskState = "paused"
 
 	TaskStateSkipped TaskState = "skipped"
+	// TaskStateCancelled indicates the execution has been cancelled.
+	TaskStateCancelled TaskState = "cancelled"
 )
 
 func (t TaskState) IsWaitForApproval() bool {
