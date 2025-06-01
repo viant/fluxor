@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/viant/fluxor/model/graph"
+	"github.com/viant/fluxor/progress"
+	execution "github
 	execution "github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/runtime/expander"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/event"
 	"github.com/viant/fluxor/service/messaging"
-	"github.com/viant/fluxor/tracing"
+	"github.com/viant/fluxor/progress"
 	"log"
 	"reflect"
 	"sort"
@@ -551,6 +553,19 @@ func (s *Service) Shutdown() {
 }
 
 func (s *Service) handleProcessedExecution(ctx context.Context, process *execution.Process, anExecution *execution.Execution, state execution.TaskState) error {
+	// Update progress counters based on final state of this execution.
+	var delta progress.Delta
+	switch state {
+	case execution.TaskStateCompleted:
+		delta = progress.Delta{Running: -1, Completed: +1}
+	case execution.TaskStateFailed:
+		delta = progress.Delta{Running: -1, Failed: +1}
+	case execution.TaskStateSkipped:
+		delta = progress.Delta{Running: -1, Skipped: +1}
+	default:
+		delta = progress.Delta{Running: -1}
+	}
+	progress.UpdateCtx(process.Ctx, delta)
 	currentTask := process.LookupTask(anExecution.TaskID)
 	if state == execution.TaskStateCompleted && currentTask.Namespace != "" {
 		output := anExecution.Output

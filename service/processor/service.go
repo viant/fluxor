@@ -8,11 +8,13 @@ import (
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/policy"
+	"github.com/viant/fluxor/progress"
+	execution "github
 	execution "github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/executor"
 	"github.com/viant/fluxor/service/messaging"
-	"github.com/viant/fluxor/tracing"
+	"github.com/viant/fluxor/progress"
 	"log"
 	"math"
 	"strings"
@@ -195,7 +197,16 @@ func (w *worker) run() {
 }
 
 // StartProcess begins execution of a workflow
+
 func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, init map[string]interface{}, customTasks ...string) (aProcess *execution.Process, err error) {
+	// Ensure we have a progress tracker in the context. Root workflow creates
+	// a new tracker; sub-workflows inherit the parent's tracker automatically.
+	var tracker *progress.Progress
+	if t, ok := progress.FromContext(ctx); ok {
+		tracker = t
+	} else {
+		ctx, tracker = progress.WithNewTracker(ctx, "", workflow.Name, nil)
+	}
 	// start tracing span for process start
 	ctx, span := tracing.StartSpan(ctx, fmt.Sprintf("processor.StartProcess %s", workflow.Name), "INTERNAL")
 	defer tracing.EndSpan(span, err)
@@ -207,10 +218,18 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 
 	// Generate a unique process ID
 	processID := workflow.Name + "/" + uuid.New().String()
+	if tracker != nil && tracker.RootProcessID == "" {
+		tracker.mu.Lock()
+		if tracker.RootProcessID == "" {
+			tracker.RootProcessID = processID
+		}
+		tracker.mu.Unlock()
+	}
 	span.WithAttributes(map[string]string{"process.id": processID})
 
 	// Create the process
 	aProcess = execution.NewProcess(processID, workflow.Name, workflow, init)
+	aProcess.Ctx = ctx
 	aProcess.Session.RegisterListeners(s.sessListeners...)
 	aProcess.Session.RegisterWhenListeners(s.whenListeners...)
 
@@ -236,6 +255,8 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	}
 	anExecution := execution.NewExecution(processID, nil, workflow.Pipeline)
 	aProcess.Push(anExecution)
+	// Record initial task allocation in progress tracker.
+	progress.UpdateCtx(ctx, progress.Delta{Total: 1, Pending: 1})
 
 	// Set aProcess state to running
 	aProcess.SetState(execution.StateRunning)
@@ -346,6 +367,15 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 		return message.Ack()
 	}
 
+	// Transition counters: pending -> running
+	progress.UpdateCtx(process.Ctx, progress.Delta{Pending: -1, Running: +1})
+	// If cancellation has been requested, do not continue executing this task –
+	// acknowledge so that allocator can eventually mark the process as
+	// cancelled once the queue drains.
+	if process.GetState() == execution.StateCancelRequested {
+		return message.Ack()
+	}
+
 	// Derive execution context from the per-process context so that cancellation
 	// requests propagate to running tasks. Fall back to incoming ctx if the
 	// stored context is nil (e.g. legacy processes loaded from store).
@@ -411,7 +441,8 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 		}
 
 		// Give up – mark as failed
-		anExecution.Fail(err)
+		progress.UpdateCtx(process.Ctx, progress.Delta{Running: -1, Failed: +1})
+	progress.UpdateCtx(process.Ctx, progress.Delta{Running: -1, Failed: +1})
 		if daoErr := s.taskExecutionDao.Save(ctx, anExecution); daoErr != nil {
 			return message.Nack(fmt.Errorf("encounter error: %w, and failed to save execution: %v", err, daoErr))
 		}
@@ -460,6 +491,8 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 		anExecution.Pause()
 	} else {
 		anExecution.Complete()
+		// running -> completed
+		progress.UpdateCtx(process.Ctx, progress.Delta{Running: -1, Completed: +1})
 	}
 
 	// Update the process with the completed execution
