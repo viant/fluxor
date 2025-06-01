@@ -48,6 +48,7 @@ type Service struct {
 	eventService      *event.Service                       `json:"eventService,omitempty"`
 	executorOptions   []texecutor.Option                   `json:"-"`
 	stateListeners    []execution.StateListener            `json:"-"`
+	whenListeners     []execution.WhenListener             `json:"-"`
 }
 
 func (s *Service) init(options []Option) {
@@ -71,6 +72,7 @@ func (s *Service) init(options []Option) {
 		processor.WithMessageQueue(s.queue),
 		processor.WithWorkers(workers),
 		processor.WithSessionListeners(s.stateListeners...),
+		processor.WithWhenListeners(s.whenListeners...),
 		processor.WithTaskExecutionDAO(s.runtime.taskExecutionDao),
 		processor.WithProcessDAO(s.runtime.processorDAO))
 	s.actions.Register(printer.New())

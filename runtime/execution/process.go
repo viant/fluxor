@@ -76,6 +76,24 @@ type Process struct {
 	allTasks         map[string]*graph.Task // Cached all tasks
 }
 
+// setDep safely records taskID dependency state inside e.Dependencies.
+func (p *Process) SetDep(e *Execution, taskID string, state TaskState) {
+	e.mux.Lock()
+	if e.Dependencies == nil {
+		e.Dependencies = make(map[string]TaskState)
+	}
+	e.Dependencies[taskID] = state
+	e.mux.Unlock()
+}
+
+// getDep safely reads a dependency value; second return value indicates presence.
+func (p *Process) GetDep(e *Execution, taskID string) (TaskState, bool) {
+	e.mux.RLock()
+	val, ok := e.Dependencies[taskID]
+	e.mux.RUnlock()
+	return val, ok
+}
+
 // CopyFrom updates exported, mutex-independent fields from src.  It intentionally
 // skips sync.Mutex as copying it would corrupt internal state.
 func (p *Process) CopyFrom(src any) {

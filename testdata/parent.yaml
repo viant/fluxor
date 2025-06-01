@@ -31,6 +31,10 @@ pipeline:
       goto:
         when: i < 3
         task: loop
+    extra:
+      action: printer:print
+      input:
+        message: extra print
 
   stop:
     action: printer:print

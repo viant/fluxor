@@ -74,22 +74,14 @@ outer:
 		if err != nil {
 			return err
 		}
-		// Finished when state completed/failed OR no remaining executions.
+		// Finished only when allocator sets final state.
 		if process.State == execution.StateCompleted || process.State == execution.StateFailed {
 			break outer // done
-		}
-		if len(process.Stack) == 0 {
-			// allocator might still flip state; give it one more poll to persist.
-			// Mark state as completed locally to unblock callers; we'll re-load
-			// latest state after breaking.
-			break outer
 		}
 
 		if !expiry.IsZero() && time.Now().After(expiry) {
 			output.Timeout = true
-			// do NOT break immediately – perform a final reload to see if process
-			// actually finished meanwhile. Continue the loop one last time.
-			// This handles races with allocator on slow/debug runs.
+			break outer // timeout reached
 		}
 		time.Sleep(poolFrequency)
 
@@ -99,13 +91,7 @@ outer:
 		return err
 	}
 
-	// If allocator has finished all executions but hasn't persisted the final
-	// state yet, treat the workflow as completed.
-	if len(process.Stack) == 0 && process.State == execution.StateRunning {
-		output.State = execution.StateCompleted
-	} else {
-		output.State = process.State
-	}
+	output.State = process.State
 	output.Output = process.Session.State
 	output.Errors = process.Errors
 	finishedAt := process.FinishedAt

@@ -62,6 +62,17 @@ func WithSessionListeners(fns ...execution.StateListener) Option {
 	}
 }
 
+// WithWhenListeners registers callbacks invoked after every when-condition
+// evaluation.
+func WithWhenListeners(fns ...execution.WhenListener) Option {
+	return func(s *Service) {
+		if len(fns) == 0 {
+			return
+		}
+		s.whenListeners = append(s.whenListeners, fns...)
+	}
+}
+
 // WithConfig sets the configuration for the service
 func WithConfig(config Config) Option {
 	return func(s *Service) {

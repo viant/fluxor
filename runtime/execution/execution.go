@@ -5,6 +5,7 @@ import (
 	"github.com/viant/fluxor/internal/idgen"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/service/event"
+	"sync"
 	"time"
 )
 
@@ -30,6 +31,7 @@ type Execution struct {
 	RunAfter       *time.Time             `json:"runAfter,omitempty"`
 	DependsOn      []string               `json:"dependencies"`
 	Dependencies   map[string]TaskState   `json:"completed,omitempty"`
+	mux            sync.RWMutex           `json:"-"`
 	Approved       *bool                  `json:"approved,omitempty"`
 	ApprovalReason string                 `json:"approvedDecision,omitempty"` // "yes" or "no"
 }
@@ -115,9 +117,14 @@ func (e *Execution) Schedule() {
 }
 
 func (e *Execution) Merge(execution *Execution) {
-	if execution == nil {
+	if execution == nil || execution == e {
 		return
 	}
+	e.mux.Lock()
+	execution.mux.RLock()
+	defer execution.mux.RUnlock()
+	defer e.mux.Unlock()
+
 	if execution.Output != nil {
 		e.Output = execution.Output
 	}
@@ -140,14 +147,14 @@ func (e *Execution) Merge(execution *Execution) {
 		e.PausedAt = execution.PausedAt
 	}
 
-	if len(e.Dependencies) == 0 {
+	if e.Dependencies == nil {
 		e.Dependencies = make(map[string]TaskState)
 	}
 	for key, value := range execution.Dependencies {
 		e.Dependencies[key] = value
 	}
 
-	if len(e.Meta) == 0 {
+	if e.Meta == nil {
 		e.Meta = make(map[string]interface{})
 	}
 	for key, value := range execution.Meta {
@@ -172,8 +179,13 @@ func (e *Execution) Clone() *Execution {
 	if e == nil {
 		return nil
 	}
+	e.mux.RLock()
+	defer e.mux.RUnlock()
 
-	clone := *e // shallow copy primitives & pointers
+	clone := *e // shallow copy primitives & pointers (includes mux contents)
+	// re-initialise the mutex so the copy has its own lock independent from
+	// the source.
+	clone.mux = sync.RWMutex{}
 
 	if e.Data != nil {
 		clone.Data = make(map[string]interface{}, len(e.Data))

@@ -2,7 +2,6 @@ package processor
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
@@ -10,7 +9,6 @@ import (
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/policy"
 	execution "github.com/viant/fluxor/runtime/execution"
-	"github.com/viant/fluxor/runtime/expander"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/executor"
 	"github.com/viant/fluxor/service/messaging"
@@ -49,6 +47,7 @@ type Service struct {
 	processDAO       dao.Service[string, execution.Process]
 	taskExecutionDao dao.Service[string, execution.Execution]
 	sessListeners    []execution.StateListener
+	whenListeners    []execution.WhenListener
 
 	queue    messaging.Queue[execution.Execution]
 	executor executor.Service
@@ -213,6 +212,7 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	// Create the process
 	aProcess = execution.NewProcess(processID, workflow.Name, workflow, init)
 	aProcess.Session.RegisterListeners(s.sessListeners...)
+	aProcess.Session.RegisterWhenListeners(s.whenListeners...)
 
 	// Propagate policy (if any) from the incoming context so that executor can
 	// enforce it later on.
@@ -362,7 +362,7 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 					}
 					// mark dependency in parent execution (if any)
 					if parent := proc.LookupExecution(inProc.ParentTaskID); parent != nil {
-						parent.Dependencies[inProc.TaskID] = execution.TaskStateFailed
+						proc.SetDep(parent, inProc.TaskID, execution.TaskStateFailed)
 					}
 					// remove failed execution from the stack so that allocator can
 					// continue evaluating remaining tasks.
@@ -434,81 +434,84 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 	// Propagate success to parent process: mark dependencies, prune the stack
 	// and, if nothing else is pending, mark the whole process as completed.
 	// ------------------------------------------------------------------
-	if proc, pErr := s.processDAO.Load(ctx, anExecution.ProcessID); pErr == nil && proc != nil {
-		// ------------------------------------------------------------------
-		// Attach task output to session and evaluate post parameters so that
-		// subsequent tasks can reference the results of this execution.
-		// This logic duplicates the side-effects previously handled by the
-		// allocator service.  Keeping it here ensures that workflows which
-		// execute many tasks within the same process can immediately use the
-		// output values of the just-finished task without waiting for the
-		// allocator to revisit the execution.
-		// ------------------------------------------------------------------
-		if task := proc.LookupTask(anExecution.TaskID); task != nil {
-			if task.Namespace != "" && anExecution.Output != nil {
-				// Convert the typed output (potentially a struct) to a
-				// map[string]interface{} so that downstream expander logic can
-				// access fields dynamically using dot notation.
-				var outAsMap map[string]interface{}
-				if data, mErr := json.Marshal(anExecution.Output); mErr == nil {
-					_ = json.Unmarshal(data, &outAsMap)
-				}
-				if outAsMap == nil {
-					// Fallback – store the original value if the marshal
-					// conversion failed for some reason.
-					proc.Session.Set(task.Namespace, anExecution.Output)
-				} else {
-					proc.Session.Set(task.Namespace, outAsMap)
-				}
-
-				// ------------------------------------------------------------------
-				// Evaluate post-execution parameters (if any) in the same way
-				// allocator.handleTaskDone() does.
-				// ------------------------------------------------------------------
-				if len(task.Post) > 0 {
-					// Build a temporary session merging current state with the
-					// freshly produced output so that $Stdout etc. can be
-					// expanded.
-					src := proc.Session.Clone()
-					for k, v := range outAsMap {
-						src.Set(k, v)
+	/*
+		if proc, pErr := s.processDAO.Load(ctx, anExecution.ProcessID); pErr == nil && proc != nil {
+			// ------------------------------------------------------------------
+			// Attach task output to session and evaluate post parameters so that
+			// subsequent tasks can reference the results of this execution.
+			// This logic duplicates the side-effects previously handled by the
+			// allocator service.  Keeping it here ensures that workflows which
+			// execute many tasks within the same process can immediately use the
+			// output values of the just-finished task without waiting for the
+			// allocator to revisit the execution.
+			// ------------------------------------------------------------------
+			if task := proc.LookupTask(anExecution.TaskID); task != nil {
+				if task.Namespace != "" && anExecution.Output != nil {
+					// Convert the typed output (potentially a struct) to a
+					// map[string]interface{} so that downstream expander logic can
+					// access fields dynamically using dot notation.
+					var outAsMap map[string]interface{}
+					if data, mErr := json.Marshal(anExecution.Output); mErr == nil {
+						_ = json.Unmarshal(data, &outAsMap)
+					}
+					if outAsMap == nil {
+						// Fallback – store the original value if the marshal
+						// conversion failed for some reason.
+						proc.Session.Set(task.Namespace, anExecution.Output)
+					} else {
+						proc.Session.Set(task.Namespace, outAsMap)
 					}
 
-					for _, param := range task.Post {
-						expanded, expErr := expander.Expand(param.Value, src.State)
-						if expErr != nil {
-							// Skip parameter on error but continue processing –
-							// allocator will surface the error later.
-							continue
+					// ------------------------------------------------------------------
+					// Evaluate post-execution parameters (if any) in the same way
+					// allocator.handleTaskDone() does.
+					// ------------------------------------------------------------------
+					if len(task.Post) > 0 {
+						// Build a temporary session merging current state with the
+						// freshly produced output so that $Stdout etc. can be
+						// expanded.
+						src := proc.Session.Clone()
+						for k, v := range outAsMap {
+							src.Set(k, v)
 						}
-						name := param.Name
-						if strings.HasSuffix(name, "[]") {
-							proc.Session.Append(strings.TrimSuffix(name, "[]"), expanded)
-							continue
+
+						for _, param := range task.Post {
+							expanded, expErr := expander.Expand(param.Value, src.State)
+							if expErr != nil {
+								// Skip parameter on error but continue processing –
+								// allocator will surface the error later.
+								continue
+							}
+							name := param.Name
+							if strings.HasSuffix(name, "[]") {
+								proc.Session.Append(strings.TrimSuffix(name, "[]"), expanded)
+								continue
+							}
+							proc.Session.Set(name, expanded)
 						}
-						proc.Session.Set(name, expanded)
 					}
 				}
 			}
-		}
 
-		if inProc := proc.LookupExecution(anExecution.TaskID); inProc != nil {
-			inProc.State = execution.TaskStateCompleted
-			inProc.CompletedAt = anExecution.CompletedAt
-			// reflect parent dependency ready
-			if parent := proc.LookupExecution(inProc.ParentTaskID); parent != nil {
-				parent.Dependencies[inProc.TaskID] = execution.TaskStateCompleted
+			if inProc := proc.LookupExecution(anExecution.TaskID); inProc != nil {
+				inProc.State = execution.TaskStateCompleted
+				inProc.CompletedAt = anExecution.CompletedAt
+				// reflect parent dependency ready
+				if parent := proc.LookupExecution(inProc.ParentTaskID); parent != nil {
+					proc.SetDep(parent, inProc.TaskID, execution.TaskStateCompleted)
+				}
+				proc.Remove(inProc)
 			}
-			proc.Remove(inProc)
-		}
 
-		// no more executions pending – workflow finished successfully
-		if len(proc.Stack) == 0 {
-			proc.SetState(execution.StateCompleted)
+			// no more executions pending – workflow finished successfully
+			if len(proc.Stack) == 0 {
+				proc.SetState(execution.StateCompleted)
+			}
 		}
-		_ = s.processDAO.Save(ctx, proc)
-	}
+	*/
 
+	// allocator will pick up the persisted execution and update the process;
+	// processor is intentionally read-only from this point on.
 	return message.Ack()
 }
 

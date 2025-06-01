@@ -63,12 +63,16 @@ func (s *Service) Execute(ctx context.Context, input *Input, output *Output) err
 	var combinedStdout, combinedStderr strings.Builder
 	var lastExitCode int
 
+	timeoutDuration := time.Duration(input.TimeoutMs) * time.Millisecond
+	if timeoutDuration == 0 {
+		timeoutDuration = time.Minute
+	}
 	for _, cmd := range input.Commands {
 		command := &Command{
 			Input: cmd,
 		}
 
-		stdout, stderr, exitCode := s.executeCommand(ctx, session, cmd, time.Duration(input.TimeoutMs)*time.Millisecond)
+		stdout, stderr, exitCode := s.executeCommand(ctx, session, cmd, timeoutDuration)
 		command.Output = stdout
 		command.Stderr = stderr
 		command.Status = exitCode

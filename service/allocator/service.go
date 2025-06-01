@@ -368,16 +368,23 @@ func (s *Service) ensureDependencies(ctx context.Context, process *execution.Pro
 	completed := 0
 	currentTask := process.LookupTask(anExecution.TaskID)
 
+	// Guard against inconsistent state that may occur when the execution was
+	// created before dynamic sub-tasks (e.g. from template or goto) got
+	// registered.  Ensure we always have a map to index.
+	if anExecution.Dependencies == nil {
+		anExecution.Dependencies = make(map[string]execution.TaskState)
+	}
+
 	var scheduled []*execution.Execution
 	// Check if all dependencies are satisfied
 outer:
 	for _, depID := range anExecution.DependsOn {
 		task := process.LookupTask(depID)
-		status := anExecution.Dependencies[task.ID]
+		status, _ := process.GetDep(anExecution, task.ID)
 		switch status {
 		case execution.TaskStatePending:
 			scheduled = append(scheduled, execution.NewExecution(process.ID, currentTask, task))
-			anExecution.Dependencies[task.ID] = execution.TaskStateScheduled
+			process.SetDep(anExecution, task.ID, execution.TaskStateScheduled)
 			break outer
 		case execution.TaskStateCompleted, execution.TaskStateSkipped:
 			completed++
@@ -415,11 +422,11 @@ func (s *Service) ensureSubTasks(ctx context.Context, process *execution.Process
 outer:
 	for i := range currentTask.Tasks {
 		task := currentTask.Tasks[i]
-		status := anExecution.Dependencies[task.ID]
+		status, _ := process.GetDep(anExecution, task.ID)
 		switch status {
 		case execution.TaskStatePending:
 			scheduled = append(scheduled, execution.NewExecution(process.ID, currentTask, task))
-			anExecution.Dependencies[task.ID] = execution.TaskStateScheduled
+			process.SetDep(anExecution, task.ID, execution.TaskStateScheduled)
 			if !async {
 				break outer
 			}
@@ -466,10 +473,10 @@ func (s *Service) updateExecutionState(ctx context.Context, process *execution.P
 func (s *Service) scheduleTask(ctx context.Context, process *execution.Process, parentTaskId, taskId string, anExecution *execution.Execution) *execution.Execution {
 	parent := process.LookupTask(parentTaskId)
 	task := process.LookupTask(taskId)
-	status := anExecution.Dependencies[task.ID]
+	status, _ := process.GetDep(anExecution, task.ID)
 	if status == execution.TaskStatePending {
 		depExecution := execution.NewExecution(process.ID, parent, task)
-		anExecution.Dependencies[task.ID] = execution.TaskStateScheduled
+		process.SetDep(anExecution, task.ID, execution.TaskStateScheduled)
 		process.Push(depExecution)
 		return depExecution
 	}
@@ -506,7 +513,7 @@ func (s *Service) TaskCompleted(ctx context.Context, processID string, taskID st
 	anExecution := process.LookupExecution(taskID)
 	parentExecution := process.LookupExecution(anExecution.ParentTaskID)
 	if parentExecution != nil {
-		parentExecution.Dependencies[taskID] = execution.TaskStateCompleted
+		process.SetDep(parentExecution, taskID, execution.TaskStateCompleted)
 	}
 	// Save the updated process
 	if err := s.processDAO.Save(ctx, process); err != nil {
@@ -543,7 +550,29 @@ func (s *Service) handleProcessedExecution(ctx context.Context, process *executi
 	}
 	parent := process.LookupExecution(anExecution.ParentTaskID)
 	if parent != nil {
-		parent.Dependencies[anExecution.TaskID] = state
+		process.SetDep(parent, anExecution.TaskID, state)
+
+		// If the task triggered a goto jump we skip all remaining sibling tasks
+		// (those that come after the current one in the parent's task list) so
+		// they are not executed in this iteration.
+		if anExecution.GoToTask != "" {
+			parentTask := process.LookupTask(parent.TaskID)
+			if parentTask != nil {
+				idx := -1
+				for i, st := range parentTask.Tasks {
+					if st.ID == anExecution.TaskID {
+						idx = i
+						break
+					}
+				}
+				if idx >= 0 {
+					for i := idx + 1; i < len(parentTask.Tasks); i++ {
+						sib := parentTask.Tasks[i]
+						process.SetDep(parent, sib.ID, execution.TaskStateSkipped)
+					}
+				}
+			}
+		}
 	}
 	process.Remove(anExecution)
 	err := s.processDAO.Save(ctx, process)

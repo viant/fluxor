@@ -21,7 +21,13 @@ type Session struct {
 	mu        sync.RWMutex
 
 	listeners []StateListener // invoked on Set
+	whenL     []WhenListener  // invoked on when-condition evaluation
 }
+
+// WhenListener is invoked every time a `when:` expression is evaluated. The
+// listener receives the session (at evaluation time), the raw expression and
+// the boolean outcome of the evaluation.
+type WhenListener func(s *Session, expr string, result bool)
 
 // StateListener is invoked every time Session.Set overwrites an existing key
 // or inserts a new one.
@@ -38,6 +44,28 @@ func (s *Session) RegisterListeners(fn ...StateListener) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.listeners = append(s.listeners, fn...)
+}
+
+// RegisterWhenListeners attaches callbacks that are executed after every
+// `when:` condition evaluation.
+func (s *Session) RegisterWhenListeners(fn ...WhenListener) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.whenL = append(s.whenL, fn...)
+}
+
+// FireWhen notifies all registered when-listeners. It is exported so that code
+// outside the execution package (e.g. allocator) can emit the event.
+func (s *Session) FireWhen(expr string, result bool) {
+	s.mu.RLock()
+	lst := append([]WhenListener(nil), s.whenL...)
+	s.mu.RUnlock()
+	for _, fn := range lst {
+		fn(s, expr, result)
+	}
 }
 
 // Set adds or updates a parameter in the session
@@ -106,6 +134,9 @@ func (s *Session) TaskSession(from map[string]interface{}, options ...Option) *S
 
 	if len(s.listeners) > 0 {
 		ret.listeners = s.listeners
+	}
+	if len(s.whenL) > 0 {
+		ret.whenL = s.whenL
 	}
 
 	for k, v := range from {
@@ -184,6 +215,7 @@ func (s *Session) Clone() *Session {
 
 	clone := NewSession(s.ID)
 	clone.listeners = append(clone.listeners, s.listeners...)
+	clone.whenL = append(clone.whenL, s.whenL...)
 	for k, v := range s.State {
 		clone.State[k] = v
 	}

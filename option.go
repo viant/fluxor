@@ -132,3 +132,11 @@ func WithStateListeners(listeners ...execution.StateListener) Option {
 		s.stateListeners = listeners
 	}
 }
+
+// WithWhenListeners registers callbacks invoked after every when-condition
+// evaluation.
+func WithWhenListeners(listeners ...execution.WhenListener) Option {
+	return func(s *Service) {
+		s.whenListeners = listeners
+	}
+}

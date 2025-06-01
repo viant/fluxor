@@ -20,21 +20,24 @@ func evaluateCondition(condition string, process *execution2.Process, task *grap
 		session.Set(task.Namespace, anExecution.Output)
 	}
 	evaluated := evaluator.Evaluate(condition, session.State)
-	if evaluated == nil {
-		return false, nil
+	var result bool
+	if evaluated != nil {
+		switch actual := evaluated.(type) {
+		case bool:
+			result = actual
+		case int:
+			result = actual != 0
+		case string:
+			result = strings.TrimSpace(actual) != ""
+		case float64:
+			result = actual != 0
+		case float32:
+			result = actual != 0
+		default:
+			return false, fmt.Errorf("unsupported condition type: %T +%v\n", evaluated, evaluated)
+		}
 	}
-	switch actual := evaluated.(type) {
-	case bool:
-		return actual, nil
-	case int:
-		return actual != 0, nil
-	case string:
-		return strings.TrimSpace(actual) != "", nil
-	case float64:
-		return actual != 0, nil
-	case float32:
-		return actual != 0, nil
-	default:
-		return false, fmt.Errorf("unsupported condition type: %T +%v\n", evaluated, evaluated)
-	}
+	// notify listeners
+	process.Session.FireWhen(condition, result)
+	return result, nil
 }

@@ -27,7 +27,7 @@ import (
 //
 // For convenience the listener is defined as a function type rather than an interface; users can
 // therefore pass a plain function literal when customising the executor.
-type Listener func(task *graph.Task, input, output interface{})
+type Listener func(task *graph.Task, exec *execution.Execution)
 
 // StdoutListener replicates the debug prints that were hard-coded in the previous implementation.
 // It serialises the task specification, input and output into JSON and prints them to standard
@@ -315,18 +315,19 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 	}
 
 	// Invoke the user-defined method.
-	if err = method(ctx, input, output); err != nil {
+	err = method(ctx, input, output)
+	anExecution.Output = output
+	if err != nil {
+		anExecution.Error = err.Error()
 		spanErr = err
-		return spanErr
 	}
 
 	// Call the listener (if any).
 	if s.listener != nil {
-		s.listener(task, input, output)
+		s.listener(task, anExecution)
 	}
 
-	anExecution.Output = output
-	return nil
+	return err
 }
 
 // shouldSkipApproval returns true when actionName (already lower-cased) starts
