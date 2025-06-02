@@ -40,7 +40,7 @@ type Progress struct {
 	RunningTasks   int
 	PendingTasks   int
 
-	mu       sync.Mutex
+	sync.Mutex
 	onChange func(Progress)
 }
 
@@ -54,7 +54,7 @@ func (p *Progress) Update(d Delta) {
 		return
 	}
 
-	p.mu.Lock()
+	p.Lock()
 
 	p.TotalTasks += d.Total
 	p.CompletedTasks += d.Completed
@@ -68,7 +68,7 @@ func (p *Progress) Update(d Delta) {
 	snapshot := *p
 	cb := p.onChange
 
-	p.mu.Unlock()
+	p.Unlock()
 
 	if cb != nil {
 		cb(snapshot)
@@ -80,8 +80,8 @@ func (p *Progress) Snapshot() Progress {
 	if p == nil {
 		return Progress{}
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.Lock()
+	defer p.Unlock()
 	return *p
 }
 
@@ -92,9 +92,9 @@ func (p *Progress) OnChange(cb func(Progress)) {
 	if p == nil {
 		return
 	}
-	p.mu.Lock()
+	p.Lock()
 	p.onChange = cb
-	p.mu.Unlock()
+	p.Unlock()
 }
 
 // ----------------------------------------------------------------------------

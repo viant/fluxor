@@ -9,12 +9,11 @@ import (
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/policy"
 	"github.com/viant/fluxor/progress"
-	execution "github
 	execution "github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/executor"
 	"github.com/viant/fluxor/service/messaging"
-	"github.com/viant/fluxor/progress"
+	"github.com/viant/fluxor/tracing"
 	"log"
 	"math"
 	"strings"
@@ -219,11 +218,11 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	// Generate a unique process ID
 	processID := workflow.Name + "/" + uuid.New().String()
 	if tracker != nil && tracker.RootProcessID == "" {
-		tracker.mu.Lock()
+		tracker.Lock()
 		if tracker.RootProcessID == "" {
 			tracker.RootProcessID = processID
 		}
-		tracker.mu.Unlock()
+		tracker.Unlock()
 	}
 	span.WithAttributes(map[string]string{"process.id": processID})
 
@@ -311,6 +310,47 @@ func (s *Service) ResumeProcess(ctx context.Context, processID string) error {
 	process.SetState(execution.StateRunning)
 	return s.processDAO.Save(ctx, process)
 	// Let the allocator schedule next tasks
+}
+
+// ResumeFailedProcess resets a failed or cancelled workflow so that execution
+// can continue.  It rewinds every execution that ended with failed/cancelled
+// state back to pending and switches the parent process to running.  The
+// allocator will then pick up the work in its next iteration.
+func (s *Service) ResumeFailedProcess(ctx context.Context, processID string) error {
+	proc, err := s.processDAO.Load(ctx, processID)
+	if err != nil {
+		return fmt.Errorf("failed to load process: %w", err)
+	}
+	if proc == nil {
+		return fmt.Errorf("process %s not found", processID)
+	}
+
+	state := proc.GetState()
+	if state != execution.StateFailed && state != execution.StateCancelled {
+		return fmt.Errorf("process %s is not in failed/cancelled state", processID)
+	}
+
+	// Remove recorded errors and rewind executions.
+	failedCount := 0
+	proc.Errors = map[string]string{}
+	for _, ex := range proc.Stack {
+		switch ex.State {
+		case execution.TaskStateFailed, execution.TaskStateCancelled:
+			failedCount++
+			ex.State = execution.TaskStatePending
+			ex.Error = ""
+		}
+	}
+
+	// Reactivate
+	proc.SetState(execution.StateRunning)
+
+	// Update progress tracker if available
+	if failedCount > 0 {
+		progress.UpdateCtx(proc.Ctx, progress.Delta{Failed: -failedCount, Pending: +failedCount})
+	}
+
+	return s.processDAO.Save(ctx, proc)
 }
 
 // CancelProcess requests cancellation of a running or paused process. It marks
@@ -442,7 +482,7 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 
 		// Give up – mark as failed
 		progress.UpdateCtx(process.Ctx, progress.Delta{Running: -1, Failed: +1})
-	progress.UpdateCtx(process.Ctx, progress.Delta{Running: -1, Failed: +1})
+		progress.UpdateCtx(process.Ctx, progress.Delta{Running: -1, Failed: +1})
 		if daoErr := s.taskExecutionDao.Save(ctx, anExecution); daoErr != nil {
 			return message.Nack(fmt.Errorf("encounter error: %w, and failed to save execution: %v", err, daoErr))
 		}
@@ -499,86 +539,6 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 	if err := s.taskExecutionDao.Save(ctx, anExecution); err != nil {
 		return message.Nack(err)
 	}
-
-	// ------------------------------------------------------------------
-	// Propagate success to parent process: mark dependencies, prune the stack
-	// and, if nothing else is pending, mark the whole process as completed.
-	// ------------------------------------------------------------------
-	/*
-		if proc, pErr := s.processDAO.Load(ctx, anExecution.ProcessID); pErr == nil && proc != nil {
-			// ------------------------------------------------------------------
-			// Attach task output to session and evaluate post parameters so that
-			// subsequent tasks can reference the results of this execution.
-			// This logic duplicates the side-effects previously handled by the
-			// allocator service.  Keeping it here ensures that workflows which
-			// execute many tasks within the same process can immediately use the
-			// output values of the just-finished task without waiting for the
-			// allocator to revisit the execution.
-			// ------------------------------------------------------------------
-			if task := proc.LookupTask(anExecution.TaskID); task != nil {
-				if task.Namespace != "" && anExecution.Output != nil {
-					// Convert the typed output (potentially a struct) to a
-					// map[string]interface{} so that downstream expander logic can
-					// access fields dynamically using dot notation.
-					var outAsMap map[string]interface{}
-					if data, mErr := json.Marshal(anExecution.Output); mErr == nil {
-						_ = json.Unmarshal(data, &outAsMap)
-					}
-					if outAsMap == nil {
-						// Fallback – store the original value if the marshal
-						// conversion failed for some reason.
-						proc.Session.Set(task.Namespace, anExecution.Output)
-					} else {
-						proc.Session.Set(task.Namespace, outAsMap)
-					}
-
-					// ------------------------------------------------------------------
-					// Evaluate post-execution parameters (if any) in the same way
-					// allocator.handleTaskDone() does.
-					// ------------------------------------------------------------------
-					if len(task.Post) > 0 {
-						// Build a temporary session merging current state with the
-						// freshly produced output so that $Stdout etc. can be
-						// expanded.
-						src := proc.Session.Clone()
-						for k, v := range outAsMap {
-							src.Set(k, v)
-						}
-
-						for _, param := range task.Post {
-							expanded, expErr := expander.Expand(param.Value, src.State)
-							if expErr != nil {
-								// Skip parameter on error but continue processing –
-								// allocator will surface the error later.
-								continue
-							}
-							name := param.Name
-							if strings.HasSuffix(name, "[]") {
-								proc.Session.Append(strings.TrimSuffix(name, "[]"), expanded)
-								continue
-							}
-							proc.Session.Set(name, expanded)
-						}
-					}
-				}
-			}
-
-			if inProc := proc.LookupExecution(anExecution.TaskID); inProc != nil {
-				inProc.State = execution.TaskStateCompleted
-				inProc.CompletedAt = anExecution.CompletedAt
-				// reflect parent dependency ready
-				if parent := proc.LookupExecution(inProc.ParentTaskID); parent != nil {
-					proc.SetDep(parent, inProc.TaskID, execution.TaskStateCompleted)
-				}
-				proc.Remove(inProc)
-			}
-
-			// no more executions pending – workflow finished successfully
-			if len(proc.Stack) == 0 {
-				proc.SetState(execution.StateCompleted)
-			}
-		}
-	*/
 
 	// allocator will pick up the persisted execution and update the process;
 	// processor is intentionally read-only from this point on.
