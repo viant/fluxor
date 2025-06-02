@@ -328,6 +328,74 @@ if a retry-strategy is defined).
 
 Fluxor includes an **opt-in** policy subsystem that can pause task execution until it is manually approved – perfect for production safety-nets, dry-runs or interactive debugging.
 
+## Runtime Control Plane (pause / resume / cancel)
+
+Starting with v0.4 Fluxor ships a lightweight control-plane that lets operators interact with a **live** workflow run after it has started.
+
+| Action | Effect |
+|--------|--------|
+| `pause`  | Stops **scheduling** new tasks. In-flight executions finish normally. |
+| `resume` | Re-enables scheduling after a pause. |
+| `cancel` | Immediately cancels the per-process context (<code>ctx.Done()</code>) so long-running tasks terminate early **and** stops further scheduling. | 
+| `resumeFailed` | Rewinds a workflow that ended in *failed* / *cancelled* state and re-starts it. |
+
+Simple API calls:
+
+```go
+// pause / resume
+_ = processor.PauseProcess(ctx,   "workflow/123")
+_ = processor.ResumeProcess(ctx,  "workflow/123")
+
+// graceful cancellation
+_ = processor.CancelProcess(ctx,  "workflow/123", "cli kill")
+
+// give the workflow another try after fixing the root cause
+_ = processor.ResumeFailedProcess(ctx, "workflow/123")
+```
+
+### Life-cycle diagram
+
+```
+          ┌────────────┐               ┌───────────────┐
+   start  │  running   │ pause         │ pauseRequested│
+─────────►│            │──────────────►│               │
+          └─────┬──────┘               └──────┬────────┘
+                │ resume                         │ all running
+                │                                │ tasks drained
+                │                                ▼
+                │               ┌───────────────┐
+                └───────────────│   paused      │
+                                 └──────┬────────┘ resume
+                                        │
+                                        ▼
+                                  (back to running)
+
+cancel        ┌──────────────┐
+─────────────►│cancelRequested│── allocator ──► cancelled
+              └──────────────┘
+
+```
+
+## One-line Progress Tracker
+
+Every root workflow carries a context-local *Progress* tracker.  Allocator, Processor and Executor update it with a single helper:
+
+```go
+progress.UpdateCtx(ctx, progress.Delta{Pending:-1, Running:+1})
+```
+
+The tracker keeps aggregate counters (total / completed / skipped / failed / …) for **all** sub-workflows and exposes an optional callback to stream live updates to dashboards.
+
+Snapshot at any time:
+
+```go
+if p, ok := progress.GetSnapshot(ctx); ok {
+    fmt.Printf("%.1f%% done (%d/%d)\n",
+        100*float64(p.CompletedTasks)/float64(p.TotalTasks),
+        p.CompletedTasks, p.TotalTasks)
+}
+```
+
 ### Execution Modes
 
 | Mode | Behaviour |
