@@ -1,0 +1,19 @@
+init:
+  results: []
+pipeline:
+  loop:
+    plan:
+      action: printer:print
+      input:
+        message: plan
+      post:
+        results[]: 1
+
+    exec:
+      action: printer:print
+      input:
+        message: exec
+      goto:
+        when: len(results) < 4
+        task: loop
+
