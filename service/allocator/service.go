@@ -543,8 +543,7 @@ func (s *Service) TaskCompleted(ctx context.Context, processID string, taskID st
 		return fmt.Errorf("failed to save process %s: %w", processID, err)
 	}
 
-	// Immediately try to scheduleTask more tasks
-	return s.scheduleNextTasks(ctx, process)
+	return nil
 }
 
 // Shutdown stops the allocator service
@@ -659,10 +658,14 @@ func (s *Service) handleTaskDone(currentTask *graph.Task, process *execution.Pro
 	if len(currentTask.Goto) > 0 {
 		// Evaluate transitions in order
 		for _, transition := range currentTask.Goto {
-			// Evaluate condition based on process session state
-			conditionMet, err := evaluateCondition(transition.When, process, currentTask, anExecution, false)
-			if err != nil {
-				return err
+			conditionMet := true
+			if transition.When != "" {
+				var err error
+				// Evaluate condition based on process session state
+				conditionMet, err = evaluateCondition(transition.When, process, currentTask, anExecution, false)
+				if err != nil {
+					return err
+				}
 			}
 			if conditionMet && transition.Task != "" {
 				anExecution.GoToTask = transition.Task

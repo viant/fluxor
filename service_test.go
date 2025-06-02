@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	_ "github.com/viant/afs/embed"
 	"github.com/viant/fluxor"
+	"github.com/viant/fluxor/policy"
 	"github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/approval"
 	"github.com/viant/fluxor/service/executor"
@@ -18,6 +19,55 @@ import (
 //go:embed testdata/*
 var embedFS embed.FS
 
+func TestServiceGoTo(t *testing.T) {
+	srv := fluxor.New(
+		fluxor.WithMetaFsOptions(&embedFS),
+		fluxor.WithMetaBaseURL("embed:///testdata"),
+		//fluxor.WithExecutorOptions(executor.WithListener(executor.StdoutListener)),
+		fluxor.WithTracing("fluxor", "0.0.1", "span.txt"),
+		fluxor.WithWhenListeners(func(s *execution.Session, key string, result bool) {
+			data, _ := json.Marshal(s.State)
+			fmt.Printf("When: key: '%v', when: '%v'\n", key, result)
+			fmt.Println("state:" + string(data))
+		}),
+		fluxor.WithStateListeners(func(s *execution.Session, key string, oldVal, newVal interface{}) {
+			//fmt.Printf("State changed: key: '%v', from: %v: to: %v\n", key, oldVal, newVal)
+		}),
+	)
+
+	runtime := srv.Runtime()
+	ctx := context.Background()
+
+	approvalSrv := srv.ApprovalService()
+	done := approval.AutoApprove(ctx, approvalSrv, 10*time.Millisecond)
+	defer done()
+
+	ctx = policy.WithPolicy(ctx, &policy.Policy{ // only to copy into process
+		Mode: policy.ModeAsk,
+	})
+
+	workflow, err := runtime.LoadWorkflow(ctx, "goto.yaml")
+	if !assert.Nil(t, err) {
+		return
+	}
+	assert.NotNil(t, workflow)
+	_ = runtime.Start(ctx)
+
+	//ctx = policy.WithPolicy(ctx, &policy.Policy{ // only to copy into process
+	//	Mode: policy.ModeAsk,
+	//})
+
+	process, wait, err := runtime.StartProcess(ctx, workflow, map[string]interface{}{})
+	if !assert.Nil(t, err) {
+		return
+	}
+	assert.NotNil(t, process)
+
+	output, err := wait(ctx, time.Hour)
+	data, _ := json.Marshal(output)
+	fmt.Println(string(data), err)
+
+}
 func TestServiceWithParentWorkflow(t *testing.T) {
 	srv := fluxor.New(
 		fluxor.WithMetaFsOptions(&embedFS),

@@ -19,7 +19,11 @@ func evaluateCondition(condition string, process *execution2.Process, task *grap
 	if anExecution.Output != nil {
 		session.Set(task.Namespace, anExecution.Output)
 	}
-	evaluated := evaluator.Evaluate(condition, session.State)
+	expr := condition
+	if !strings.HasPrefix(expr, "${") {
+		expr = "${" + expr + "}"
+	}
+	evaluated := evaluator.Evaluate(expr, session.State)
 	var result bool
 	if evaluated != nil {
 		switch actual := evaluated.(type) {

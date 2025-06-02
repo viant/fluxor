@@ -59,6 +59,13 @@ func (e *ExpressionEvaluator) Evaluate(expr string, variables map[string]interfa
 					rhs := strings.TrimSpace(rest[len(op):])
 					leftVal := e.evaluateLen(arg, variables)
 					rightVal := Evaluate(rhs, variables)
+					if rightVal == nil {
+						if iv, err := strconv.Atoi(rhs); err == nil {
+							rightVal = iv
+						} else if fv, err := strconv.ParseFloat(rhs, 64); err == nil {
+							rightVal = fv
+						}
+					}
 					cmp := compareValues(leftVal, rightVal)
 					switch op {
 					case "==":
