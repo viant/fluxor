@@ -190,8 +190,6 @@ func (s *Service) allocateTasks(ctx context.Context) error {
 
 // scheduleNextTasks allocates the next ready tasks for a process
 func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Process) error {
-	// Skip if process has reached max concurrent tasks
-
 	// Check if there are tasks on the stack to execute
 	if len(process.Stack) == 0 {
 		// No more tasks to execute, check if process is complete
@@ -554,6 +552,7 @@ func (s *Service) Shutdown() {
 func (s *Service) handleProcessedExecution(ctx context.Context, process *execution.Process, anExecution *execution.Execution, state execution.TaskState) error {
 	// Update progress counters based on final state of this execution.
 	var delta progress.Delta
+	process.SetDep(anExecution, anExecution.ID, state)
 	switch state {
 	case execution.TaskStateCompleted:
 		delta = progress.Delta{Running: -1, Completed: +1}

@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	_ "github.com/viant/afs/embed"
 	"github.com/viant/fluxor"
-	"github.com/viant/fluxor/policy"
 	"github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/approval"
 	"github.com/viant/fluxor/service/executor"
@@ -42,9 +41,9 @@ func TestServiceGoTo(t *testing.T) {
 	done := approval.AutoApprove(ctx, approvalSrv, 10*time.Millisecond)
 	defer done()
 
-	ctx = policy.WithPolicy(ctx, &policy.Policy{ // only to copy into process
-		Mode: policy.ModeAsk,
-	})
+	//ctx = policy.WithPolicy(ctx, &policy.Policy{ // only to copy into process
+	//	Mode: policy.ModeAsk,
+	//})
 
 	workflow, err := runtime.LoadWorkflow(ctx, "goto.yaml")
 	if !assert.Nil(t, err) {
