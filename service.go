@@ -86,6 +86,8 @@ func (s *Service) init(options []Option) {
 	s.runtime.workflowService = aworkflow.New(s.runtime.processor, s.runtime.workflowDAO, s.runtime.processorDAO)
 	s.actions.Register(s.runtime.workflowService)
 	s.runtime.allocator = allocator.New(s.runtime.processorDAO, s.runtime.taskExecutionDao, s.queue, allocator.DefaultConfig())
+	// expose the shared queue on the runtime for ad-hoc executions
+	s.runtime.queue = s.queue
 
 	if s.eventService == nil {
 		s.eventService, _ = event.New("memory", event.WithNewMemoryQueueConfig(mmemory.NamedConfig))

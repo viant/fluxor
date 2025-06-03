@@ -2,14 +2,17 @@ package fluxor
 
 import (
 	"context"
+	"fmt"
+	"time"
+
 	"github.com/viant/fluxor/model"
 	execution "github.com/viant/fluxor/runtime/execution"
 	aworkflow "github.com/viant/fluxor/service/action/workflow"
 	"github.com/viant/fluxor/service/allocator"
 	"github.com/viant/fluxor/service/dao"
 	"github.com/viant/fluxor/service/dao/workflow"
+	"github.com/viant/fluxor/service/messaging"
 	"github.com/viant/fluxor/service/processor"
-	"time"
 )
 
 // Runtime represents a workflow engine runtime
@@ -20,6 +23,8 @@ type Runtime struct {
 	taskExecutionDao dao.Service[string, execution.Execution]
 	processor        *processor.Service
 	allocator        *allocator.Service
+	// queue is the shared execution queue (processor inbound)
+	queue messaging.Queue[execution.Execution]
 }
 
 // LoadWorkflow loads a workflow
@@ -65,6 +70,45 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 // Process returns a process
 func (r *Runtime) Process(ctx context.Context, id string) (*execution.Process, error) {
 	return r.processorDAO.Load(ctx, id)
+}
+
+// QueueExecution publishes an ad-hoc execution to the processor queue.
+func (r *Runtime) QueueExecution(ctx context.Context, exec *execution.Execution) error {
+	return r.queue.Publish(ctx, exec)
+}
+
+// WaitForExecution waits until the execution reaches a terminal state or the timeout expires.
+// WaitForExecution polls the task-execution DAO until the execution enters a terminal
+// or paused/approval state, or the timeout expires.  It returns the execution as soon
+// as its State is one of Completed, Failed, Skipped, Cancelled, Paused, or WaitForApproval.
+func (r *Runtime) WaitForExecution(
+	ctx context.Context,
+	execID string,
+	timeout time.Duration,
+) (*execution.Execution, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		exec, err := r.taskExecutionDao.Load(ctx, execID)
+		if err != nil {
+			return nil, err
+		}
+		switch exec.State {
+		case execution.TaskStateCompleted,
+			execution.TaskStateFailed,
+			execution.TaskStateSkipped,
+			execution.TaskStateCancelled,
+			execution.TaskStatePaused:
+			return exec, nil
+		default:
+			if exec.State.IsWaitForApproval() {
+				return exec, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return exec, fmt.Errorf("timeout waiting for execution %q", execID)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // Execution returns an execution
