@@ -438,6 +438,12 @@ func (s *Service) ensureSubTasks(ctx context.Context, process *execution.Process
 		}
 	}
 
+	// single-shot scheduling: if any subtask is already scheduled or running, skip re-scheduling
+	for _, task := range currentTask.Tasks {
+		if st := s.taskState(ctx, process, anExecution, task); st == execution.TaskStateScheduled || st == execution.TaskStateRunning {
+			return execution.TaskStateRunning, nil
+		}
+	}
 	var scheduled []*execution.Execution
 	// Check if all dependencies are satisfied
 outer:
