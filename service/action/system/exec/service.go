@@ -118,7 +118,7 @@ func (s *Service) executeCommand(ctx context.Context, session *sessionInfo, comm
 	if status == 0 {
 		return stdout, "", status
 	}
-	if stdout == "" {
+	if stdout == "" && err != nil {
 		stdout = err.Error()
 	}
 	return "", stdout, status
