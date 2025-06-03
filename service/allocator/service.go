@@ -442,20 +442,29 @@ func (s *Service) ensureSubTasks(ctx context.Context, process *execution.Process
 		}
 	}
 
-	// single-shot scheduling: if any subtask is already scheduled or running, skip re-scheduling
-	for _, task := range currentTask.Tasks {
-		if st := s.taskState(ctx, process, anExecution, task); st == execution.TaskStateScheduled || st == execution.TaskStateRunning {
-			return execution.TaskStateRunning, nil
-		}
+	// load persisted execution to skip already-scheduled subtasks
+	var persistedExec *execution.Execution
+	if persistedProc, err := s.processDAO.Load(ctx, process.ID); err == nil {
+		persistedExec = persistedProc.LookupExecution(anExecution.TaskID)
+	} else if !errors.Is(err, dao.ErrNotFound) {
+		return execution.TaskStateFailed, fmt.Errorf(
+			"failed to load process for idempotent scheduling check: %w", err,
+		)
 	}
 	var scheduled []*execution.Execution
-	// Check if all dependencies are satisfied
+	// Check if all dependencies are satisfied and schedule only still-pending subtasks
 outer:
 	for i := range currentTask.Tasks {
 		task := currentTask.Tasks[i]
 		status := s.taskState(ctx, process, anExecution, task)
 		switch status {
 		case execution.TaskStatePending:
+			// skip if persisted dependency state already moved off Pending
+			if persistedExec != nil {
+				if state, ok := persistedExec.Dependencies[task.ID]; ok && state != execution.TaskStatePending {
+					continue
+				}
+			}
 			scheduled = append(scheduled, execution.NewExecution(process.ID, currentTask, task))
 			process.SetDependencyState(anExecution, task.ID, execution.TaskStateScheduled)
 			if !async {
