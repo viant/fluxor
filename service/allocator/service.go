@@ -401,11 +401,11 @@ func (s *Service) ensureDependencies(ctx context.Context, process *execution.Pro
 outer:
 	for _, depID := range anExecution.DependsOn {
 		task := process.LookupTask(depID)
-		status, _ := process.GetDep(anExecution, task.ID)
+		status := s.taskState(ctx, process, anExecution, task)
 		switch status {
 		case execution.TaskStatePending:
 			scheduled = append(scheduled, execution.NewExecution(process.ID, currentTask, task))
-			process.SetDep(anExecution, task.ID, execution.TaskStateScheduled)
+			process.SetDependencyState(anExecution, task.ID, execution.TaskStateScheduled)
 			break outer
 		case execution.TaskStateCompleted, execution.TaskStateSkipped:
 			completed++
@@ -443,11 +443,11 @@ func (s *Service) ensureSubTasks(ctx context.Context, process *execution.Process
 outer:
 	for i := range currentTask.Tasks {
 		task := currentTask.Tasks[i]
-		status, _ := process.GetDep(anExecution, task.ID)
+		status := s.taskState(ctx, process, anExecution, task)
 		switch status {
 		case execution.TaskStatePending:
 			scheduled = append(scheduled, execution.NewExecution(process.ID, currentTask, task))
-			process.SetDep(anExecution, task.ID, execution.TaskStateScheduled)
+			process.SetDependencyState(anExecution, task.ID, execution.TaskStateScheduled)
 			if !async {
 				break outer
 			}
@@ -468,6 +468,14 @@ outer:
 		return execution.TaskStateCompleted, nil
 	}
 	return execution.TaskStateRunning, nil
+}
+
+func (s *Service) taskState(ctx context.Context, process *execution.Process, parentExecution *execution.Execution, task *graph.Task) execution.TaskState {
+	status, _ := process.DependencyState(parentExecution, task.ID)
+	if anExecution, _ := s.taskExecutionDao.Load(ctx, task.ID); anExecution != nil {
+		status = anExecution.State
+	}
+	return status
 }
 
 func (s *Service) updateExecutionState(ctx context.Context, process *execution.Process, anExecution *execution.Execution, state execution.TaskState) error {
@@ -494,10 +502,10 @@ func (s *Service) updateExecutionState(ctx context.Context, process *execution.P
 func (s *Service) scheduleTask(ctx context.Context, process *execution.Process, parentTaskId, taskId string, anExecution *execution.Execution) *execution.Execution {
 	parent := process.LookupTask(parentTaskId)
 	task := process.LookupTask(taskId)
-	status, _ := process.GetDep(anExecution, task.ID)
+	status := s.taskState(ctx, process, anExecution, task)
 	if status == execution.TaskStatePending {
 		depExecution := execution.NewExecution(process.ID, parent, task)
-		process.SetDep(anExecution, task.ID, execution.TaskStateScheduled)
+		process.SetDependencyState(anExecution, task.ID, execution.TaskStateScheduled)
 		process.Push(depExecution)
 		return depExecution
 	}
@@ -522,27 +530,6 @@ func (s *Service) publishTaskExecution(ctx context.Context, process *execution.P
 }
 
 // TaskCompleted marks a task as completed for a process
-func (s *Service) TaskCompleted(ctx context.Context, processID string, taskID string) error {
-	// Decrement the active task count for this process
-
-	// Load the process
-	process, err := s.processDAO.Load(ctx, processID)
-	if err != nil {
-		return fmt.Errorf("failed to load process %s: %w", processID, err)
-	}
-
-	anExecution := process.LookupExecution(taskID)
-	parentExecution := process.LookupExecution(anExecution.ParentTaskID)
-	if parentExecution != nil {
-		process.SetDep(parentExecution, taskID, execution.TaskStateCompleted)
-	}
-	// Save the updated process
-	if err := s.processDAO.Save(ctx, process); err != nil {
-		return fmt.Errorf("failed to save process %s: %w", processID, err)
-	}
-
-	return nil
-}
 
 // Shutdown stops the allocator service
 func (s *Service) Shutdown() {
@@ -552,7 +539,11 @@ func (s *Service) Shutdown() {
 func (s *Service) handleProcessedExecution(ctx context.Context, process *execution.Process, anExecution *execution.Execution, state execution.TaskState) error {
 	// Update progress counters based on final state of this execution.
 	var delta progress.Delta
-	process.SetDep(anExecution, anExecution.ID, state)
+	parent := process.LookupExecution(anExecution.ParentTaskID)
+	if parent != nil {
+		process.SetDependencyState(parent, anExecution.TaskID, state)
+	}
+
 	switch state {
 	case execution.TaskStateCompleted:
 		delta = progress.Delta{Running: -1, Completed: +1}
@@ -582,16 +573,15 @@ func (s *Service) handleProcessedExecution(ctx context.Context, process *executi
 	if anExecution.Error != "" {
 		process.Errors[currentTask.Namespace] = anExecution.Error
 	}
-	parent := process.LookupExecution(anExecution.ParentTaskID)
+	//	parent := process.LookupExecution(anExecution.ParentTaskID)
 	if parent != nil {
-		process.SetDep(parent, anExecution.TaskID, state)
-
 		// if child failed schedule parent catch task if any
 		if state == execution.TaskStateFailed {
 			if catchTask := findCatchTask(process.LookupTask(parent.TaskID)); catchTask != nil {
-				if depState, ok := process.GetDep(parent, catchTask.ID); !ok || depState == execution.TaskStatePending {
+				depState := s.taskState(ctx, process, parent, catchTask)
+				if depState == "" || depState == execution.TaskStatePending {
 					newExec := execution.NewExecution(process.ID, process.LookupTask(parent.TaskID), catchTask)
-					process.SetDep(parent, catchTask.ID, execution.TaskStateScheduled)
+					process.SetDependencyState(parent, catchTask.ID, execution.TaskStateScheduled)
 					process.Push(newExec)
 					process.Session.Set("_lastError", anExecution.Error)
 					process.Session.Set("_lastErrorTask", anExecution.TaskID)
@@ -616,7 +606,7 @@ func (s *Service) handleProcessedExecution(ctx context.Context, process *executi
 				if idx >= 0 {
 					for i := idx + 1; i < len(parentTask.Tasks); i++ {
 						sib := parentTask.Tasks[i]
-						process.SetDep(parent, sib.ID, execution.TaskStateSkipped)
+						process.SetDependencyState(parent, sib.ID, execution.TaskStateSkipped)
 					}
 				}
 			}

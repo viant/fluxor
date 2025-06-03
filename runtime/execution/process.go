@@ -87,7 +87,7 @@ type Process struct {
 }
 
 // setDep safely records taskID dependency state inside e.Dependencies.
-func (p *Process) SetDep(e *Execution, taskID string, state TaskState) {
+func (p *Process) SetDependencyState(e *Execution, taskID string, state TaskState) {
 	e.mux.Lock()
 	if e.Dependencies == nil {
 		e.Dependencies = make(map[string]TaskState)
@@ -97,7 +97,7 @@ func (p *Process) SetDep(e *Execution, taskID string, state TaskState) {
 }
 
 // getDep safely reads a dependency value; second return value indicates presence.
-func (p *Process) GetDep(e *Execution, taskID string) (TaskState, bool) {
+func (p *Process) DependencyState(e *Execution, taskID string) (TaskState, bool) {
 	e.mux.RLock()
 	val, ok := e.Dependencies[taskID]
 	e.mux.RUnlock()

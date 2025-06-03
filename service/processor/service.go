@@ -442,41 +442,11 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 			anExecution.Attempts++
 			runAt := time.Now().Add(delay)
 			anExecution.RunAfter = &runAt
-			anExecution.State = execution.TaskStateScheduled
+			anExecution.State = execution.TaskStatePending
 			if daoErr := s.taskExecutionDao.Save(ctx, anExecution); daoErr != nil {
 				return message.Nack(fmt.Errorf("error %w and failed to save execution: %v", err, daoErr))
 			}
 
-			// ------------------------------------------------------------------
-			// Keep the execution embedded inside the parent process up to date so
-			// that the allocator sees the correct RunAfter/Attempts values and does
-			// not immediately reschedule the same task in a tight loop.
-			// ------------------------------------------------------------------
-			if proc, pErr := s.processDAO.Load(ctx, anExecution.ProcessID); pErr == nil && proc != nil {
-				if inProc := proc.LookupExecution(anExecution.TaskID); inProc != nil {
-					inProc.RunAfter = anExecution.RunAfter
-					inProc.Attempts = anExecution.Attempts
-					inProc.State = anExecution.State
-					inProc.Error = err.Error()
-					// propagate error to process-level map so that allocator can mark the
-					// whole process as failed once the stack drains.
-					if task := proc.LookupTask(anExecution.TaskID); task != nil {
-						procKey := task.Namespace
-						if procKey == "" {
-							procKey = task.ID
-						}
-						proc.Errors[procKey] = err.Error()
-					}
-					// mark dependency in parent execution (if any)
-					if parent := proc.LookupExecution(inProc.ParentTaskID); parent != nil {
-						proc.SetDep(parent, inProc.TaskID, execution.TaskStateFailed)
-					}
-					// remove failed execution from the stack so that allocator can
-					// continue evaluating remaining tasks.
-					proc.Remove(inProc)
-				}
-				_ = s.processDAO.Save(ctx, proc)
-			}
 			return message.Ack()
 		}
 
