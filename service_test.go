@@ -25,9 +25,9 @@ func TestServiceGoTo(t *testing.T) {
 		//fluxor.WithExecutorOptions(executor.WithListener(executor.StdoutListener)),
 		fluxor.WithTracing("fluxor", "0.0.1", "span.txt"),
 		fluxor.WithWhenListeners(func(s *execution.Session, key string, result bool) {
-			data, _ := json.Marshal(s.State)
-			fmt.Printf("When: key: '%v', when: '%v'\n", key, result)
-			fmt.Println("state:" + string(data))
+			//data, _ := json.Marshal(s.State)
+			//fmt.Printf("When: key: '%v', when: '%v'\n", key, result)
+			//fmt.Println("state:" + string(data))
 		}),
 		fluxor.WithStateListeners(func(s *execution.Session, key string, oldVal, newVal interface{}) {
 			//fmt.Printf("State changed: key: '%v', from: %v: to: %v\n", key, oldVal, newVal)
