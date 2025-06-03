@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/viant/fluxor/model/graph"
@@ -105,6 +106,8 @@ type Service struct {
 	taskExecutionDao dao.Service[string, execution.Execution]
 	queue            messaging.Queue[execution.Execution]
 	shutdownCh       chan struct{}
+	// serialize scheduling to prevent overlapping allocation passes
+	scheduleMu sync.Mutex
 }
 
 // New creates a new allocator service
@@ -191,6 +194,9 @@ func (s *Service) allocateTasks(ctx context.Context) error {
 
 // scheduleNextTasks allocates the next ready tasks for a process
 func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Process) error {
+	// serialize scheduling for this process to prevent overlapping passes
+	s.scheduleMu.Lock()
+	defer s.scheduleMu.Unlock()
 	// Check if there are tasks on the stack to execute
 	if len(process.Stack) == 0 {
 		// No more tasks to execute, check if process is complete
