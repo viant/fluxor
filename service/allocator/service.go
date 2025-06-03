@@ -3,6 +3,7 @@ package allocator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/viant/fluxor/tracing"
 	"log"
@@ -369,6 +370,9 @@ func (s *Service) handlePendingTask(ctx context.Context, process *execution.Proc
 func (s *Service) handleRunningTask(ctx context.Context, process *execution.Process, anExecution *execution.Execution) (bool, error) {
 	runningExecution, err := s.taskExecutionDao.Load(ctx, anExecution.ID)
 	if err != nil {
+		if errors.Is(err, dao.ErrNotFound) {
+			return true, nil
+		}
 		return false, fmt.Errorf("failed to load running execution: %w", err)
 	}
 	if runningExecution.State == anExecution.State {
