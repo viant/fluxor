@@ -29,19 +29,22 @@ func (s *Service) Name() string {
 func (s *Service) Methods() types.Signatures {
 	return []types.Signature{
 		{
-			Name:   "list",
-			Input:  reflect.TypeOf(&ListInput{}),
-			Output: reflect.TypeOf(&ListOutput{}),
+			Name:        "list",
+			Description: "Lists files and directories at the specified URL.",
+			Input:       reflect.TypeOf(&ListInput{}),
+			Output:      reflect.TypeOf(&ListOutput{}),
 		},
 		{
-			Name:   "download",
-			Input:  reflect.TypeOf(&DownloadInput{}),
-			Output: reflect.TypeOf(&DownloadOutput{}),
+			Name:        "download",
+			Description: "Downloads assets from specified URLs and optionally writes data to a destination path or includes it in the response.",
+			Input:       reflect.TypeOf(&DownloadInput{}),
+			Output:      reflect.TypeOf(&DownloadOutput{}),
 		},
 		{
-			Name:   "upload",
-			Input:  reflect.TypeOf(&UploadInput{}),
-			Output: reflect.TypeOf(&UploadOutput{}),
+			Name:        "upload",
+			Description: "Uploads provided assets to their specified URLs.",
+			Input:       reflect.TypeOf(&UploadInput{}),
+			Output:      reflect.TypeOf(&UploadOutput{}),
 		},
 	}
 }

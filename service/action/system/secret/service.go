@@ -31,24 +31,28 @@ func (s *Service) Name() string {
 func (s *Service) Methods() types.Signatures {
 	return []types.Signature{
 		{
-			Name:   "secure",
-			Input:  reflect.TypeOf(&SecureInput{}),
-			Output: reflect.TypeOf(&SecureOutput{}),
+			Name:        "secure",
+			Description: "Encrypts provided content or data and stores a secret at the specified destination.",
+			Input:       reflect.TypeOf(&SecureInput{}),
+			Output:      reflect.TypeOf(&SecureOutput{}),
 		},
 		{
-			Name:   "reveal",
-			Input:  reflect.TypeOf(&RevealInput{}),
-			Output: reflect.TypeOf(&RevealOutput{}),
+			Name:        "reveal",
+			Description: "Decrypts a secret from the specified source and returns the result as plaintext or structured data.",
+			Input:       reflect.TypeOf(&RevealInput{}),
+			Output:      reflect.TypeOf(&RevealOutput{}),
 		},
 		{
-			Name:   "signJWT",
-			Input:  reflect.TypeOf(&SignJWTInput{}),
-			Output: reflect.TypeOf(&SignJWTOutput{}),
+			Name:        "signJWT",
+			Description: "Signs a JSON Web Token with specified claims and key.",
+			Input:       reflect.TypeOf(&SignJWTInput{}),
+			Output:      reflect.TypeOf(&SignJWTOutput{}),
 		},
 		{
-			Name:   "verifyJWT",
-			Input:  reflect.TypeOf(&VerifyJWTInput{}),
-			Output: reflect.TypeOf(&VerifyJWTOutput{}),
+			Name:        "verifyJWT",
+			Description: "Verifies a JSON Web Token and returns its claims if the signature is valid.",
+			Input:       reflect.TypeOf(&VerifyJWTInput{}),
+			Output:      reflect.TypeOf(&VerifyJWTOutput{}),
 		},
 	}
 }

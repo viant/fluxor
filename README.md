@@ -174,6 +174,22 @@ pipeline:
 
 ```
 
+Alternatively, you can define the pipeline as an ordered sequence of task definitions:
+
+```yaml
+pipeline:
+  - id: list
+    service: system/storage
+    action: list
+    with:
+      URL: "file://."
+  - id: show
+    service: printer
+    action: print
+    with:
+      message: ${ $.list.entries }
+```
+
 
 ## Custom Actions
 
@@ -206,9 +222,10 @@ func (s *Service) Name() string {
 func (s *Service) Methods() types.Signatures {
     return []types.Signature{
         {
-            Name:   "execute",
-            Input:  reflect.TypeOf(&Input{}),
-            Output: reflect.TypeOf(&Output{}),
+            Name:        "execute",
+            Description: "Executes custom action logic using provided input parameters to produce output.",
+            Input:       reflect.TypeOf(&Input{}),
+            Output:      reflect.TypeOf(&Output{}),
         },
     }
 }

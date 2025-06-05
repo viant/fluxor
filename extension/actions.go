@@ -1,6 +1,7 @@
 package extension
 
 import (
+	"fmt"
 	"github.com/viant/fluxor/model/types"
 	"github.com/viant/x"
 	"reflect"
@@ -15,6 +16,16 @@ type Actions struct {
 	mux      sync.RWMutex
 }
 
+func (s *Actions) Services() []string {
+	s.mux.RLock()
+	defer s.mux.RUnlock()
+	var services []string
+	for service := range s.services {
+		services = append(services, service)
+	}
+	return services
+}
+
 func (s *Actions) Types() *Types {
 	return s.types
 }
@@ -27,16 +38,21 @@ func (s *Actions) Lookup(name string) types.Service {
 }
 
 // Register registers a service
-func (s *Actions) Register(service types.Service) {
+func (s *Actions) Register(service types.Service) error {
 	s.mux.Lock()
 	defer s.mux.Unlock()
-
+	_, ok := s.services[service.Name()]
+	if ok {
+		return fmt.Errorf("service %v already registered", service.Name())
+	}
 	if typer, ok := service.(DataTypeIniter); ok {
 		typer.InitTypes(s.types)
 	}
 	s.services[service.Name()] = service
 	rType := TypeServiceOf(service)
 	s.byType[rType] = service
+
+	return nil
 }
 
 func TypeServiceOf(service types.Service) reflect.Type {

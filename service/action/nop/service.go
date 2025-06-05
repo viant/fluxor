@@ -31,9 +31,10 @@ func (s *Service) Name() string {
 func (s *Service) Methods() types.Signatures {
 	return []types.Signature{
 		{
-			Name:   "nop",
-			Input:  reflect.TypeOf(&Input{}),
-			Output: reflect.TypeOf(&Output{}),
+			Name:        "nop",
+			Description: "Performs no operation and returns immediately.",
+			Input:       reflect.TypeOf(&Input{}),
+			Output:      reflect.TypeOf(&Output{}),
 		},
 	}
 }

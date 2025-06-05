@@ -187,27 +187,76 @@ func (s *Service) parseWorkflow(node *yml.Node, workflow *model.Workflow) error 
 
 // parseRootTask converts YAML node to graph.Task
 func (s *Service) parseRootTask(node *yml.Node) (*graph.Task, error) {
-	if node == nil || node.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("pipeline node should be a mapping")
+	if node == nil {
+		return nil, fmt.Errorf("pipeline node should be a mapping or sequence")
 	}
-
 	pipelineTask := &graph.Task{}
-
-	// Parse each task in the pipeline
 	var tasks []*graph.Task
-	err := node.Pairs(func(key string, taskNode *yml.Node) error {
-		task, err := s.parseTask(key, taskNode)
-		if err != nil {
-			return err
+	switch node.Kind {
+	case yaml.MappingNode:
+		if err := node.Pairs(func(key string, taskNode *yml.Node) error {
+			task, err := s.parseTask(key, taskNode)
+			if err != nil {
+				return err
+			}
+			tasks = append(tasks, task)
+			return nil
+		}); err != nil {
+			return nil, err
 		}
-		tasks = append(tasks, task)
-		return nil
-	})
+	case yaml.SequenceNode:
+		for _, item := range node.Content {
+			if item.Kind != yaml.MappingNode {
+				return nil, fmt.Errorf("pipeline sequence items should be mappings")
+			}
+			mapping := (*yml.Node)(item)
+			if idNode := mapping.Lookup("id"); idNode != nil {
+				// -------------------------------------------------------
+				// Standard form where the task definition carries an
+				// explicit `id:` attribute.
+				// -------------------------------------------------------
+				id := idNode.Value
+				task, err := s.parseTask(id, mapping)
+				if err != nil {
+					return nil, err
+				}
+				tasks = append(tasks, task)
+				continue
+			}
 
-	if err != nil {
-		return nil, err
+			// -----------------------------------------------------------------
+			// Alternate compact form ‑ the YAML item is a single-entry mapping
+			// where the key is the task ID and the value is the task body.  This
+			// mirrors the mapping style allowed at the root `pipeline:` node but
+			// nested inside a sequence so that the execution order is preserved.
+			// Example:
+			//   - list:
+			//       service: system/storage
+			//       action: list
+			// -----------------------------------------------------------------
+			if len(mapping.Content)%2 == 0 && len(mapping.Content) >= 2 {
+				for i := 0; i < len(mapping.Content); i += 2 {
+					keyNode := mapping.Content[i]
+					valueNode := (*yml.Node)(mapping.Content[i+1])
+
+					if keyNode == nil || keyNode.Kind != yaml.ScalarNode {
+						return nil, fmt.Errorf("invalid task mapping in sequence item; task name must be a scalar key")
+					}
+
+					id := keyNode.Value
+					task, err := s.parseTask(id, valueNode)
+					if err != nil {
+						return nil, err
+					}
+					tasks = append(tasks, task)
+				}
+			} else {
+				return nil, fmt.Errorf("task id is required for sequence pipeline item")
+			}
+		}
+	default:
+		return nil, fmt.Errorf("pipeline node should be a mapping or sequence")
 	}
-
 	pipelineTask.Tasks = tasks
 	return pipelineTask, nil
 }
@@ -225,17 +274,34 @@ func (s *Service) parseTask(id string, node *yml.Node) (*graph.Task, error) {
 
 	// Parse task properties
 	err := node.Pairs(func(key string, valueNode *yml.Node) error {
-		// Case-insensitive matching is handled by yml.Node
 		lowerKey := strings.ToLower(key)
 		switch lowerKey {
+		case "id":
+			if valueNode.Kind == yaml.ScalarNode {
+				task.ID = valueNode.Value
+				task.Name = valueNode.Value
+			}
+			return nil
+		case "service":
+			if valueNode.Kind == yaml.ScalarNode {
+				if task.Action == nil {
+					task.Action = &graph.Action{}
+				}
+				task.Action.Service = valueNode.Value
+			}
+			return nil
 		case "action":
 			if valueNode.Kind == yaml.ScalarNode {
 				parts := strings.Split(valueNode.Value, ":")
-				action := &graph.Action{
-					Service: parts[0],
-				}
+				action := &graph.Action{}
 				if len(parts) > 1 {
+					action.Service = parts[0]
 					action.Method = parts[1]
+				} else if task.Action != nil && task.Action.Service != "" {
+					action.Service = task.Action.Service
+					action.Method = parts[0]
+				} else {
+					action.Service = parts[0]
 				}
 				task.Action = action
 			} else if valueNode.Kind == yaml.MappingNode {
@@ -328,6 +394,11 @@ func (s *Service) parseTask(id string, node *yml.Node) (*graph.Task, error) {
 				task.Goto = append(task.Goto, trans)
 			}
 		case "input":
+			if task.Action == nil {
+				task.Action = &graph.Action{}
+			}
+			task.Action.Input = valueNode.Interface()
+		case "with":
 			if task.Action == nil {
 				task.Action = &graph.Action{}
 			}

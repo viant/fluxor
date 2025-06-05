@@ -39,19 +39,22 @@ func (s *Service) Name() string {
 func (s *Service) Methods() types.Signatures {
 	return []types.Signature{
 		{
-			Name:   "status",
-			Input:  reflect.TypeOf(&StatusInput{}),
-			Output: reflect.TypeOf(&RunOutput{}),
+			Name:        "status",
+			Description: "Retrieves the current state and output of a workflow process based on its process ID.",
+			Input:       reflect.TypeOf(&StatusInput{}),
+			Output:      reflect.TypeOf(&RunOutput{}),
 		},
 		{
-			Name:   "run",
-			Input:  reflect.TypeOf(&RunInput{}),
-			Output: reflect.TypeOf(&RunOutput{}),
+			Name:        "run",
+			Description: "Executes a workflow with the given definition and parameters, returning the process ID, output, errors, state, and optional trace information.",
+			Input:       reflect.TypeOf(&RunInput{}),
+			Output:      reflect.TypeOf(&RunOutput{}),
 		},
 		{
-			Name:   "wait",
-			Input:  reflect.TypeOf(&WaitInput{}),
-			Output: reflect.TypeOf(&WaitOutput{}),
+			Name:        "wait",
+			Description: "Polls a workflow process until completion or timeout, returning its final state, output, errors, and timing information.",
+			Input:       reflect.TypeOf(&WaitInput{}),
+			Output:      reflect.TypeOf(&WaitOutput{}),
 		},
 	}
 }
