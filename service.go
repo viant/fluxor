@@ -7,7 +7,7 @@ import (
 	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model/types"
 	"github.com/viant/fluxor/runtime/execution"
-	ainput "github.com/viant/fluxor/service/acti
+	ainput "github.com/viant/fluxor/service/action/input"
 	"github.com/viant/fluxor/service/action/nop"
 	"github.com/viant/fluxor/service/action/printer"
 	"github.com/viant/fluxor/service/action/system/exec"
