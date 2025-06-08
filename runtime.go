@@ -6,6 +6,8 @@ import (
 	"github.com/google/uuid"
 	"time"
 
+	"github.com/viant/fluxor/internal/clock"
+
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/runtime/execution"
 	aworkflow "github.com/viant/fluxor/service/action/workflow"
@@ -15,6 +17,55 @@ import (
 	"github.com/viant/fluxor/service/messaging"
 	"github.com/viant/fluxor/service/processor"
 )
+
+// ---------------------------------------------------------------------------
+// Convenience helpers
+// ---------------------------------------------------------------------------
+
+// RunTaskOnce is a convenience helper that executes a *single* task from the
+// supplied workflow and waits for its completion.  It is intended for quick
+// ad-hoc jobs, debugging and unit tests where launching the entire workflow
+// would be unnecessary overhead.
+//
+// The helper works by submitting an "at-hoc" execution to the shared
+// allocator/processor queue, therefore semantics (retries, policies, tracing
+// etc.) are identical to regular executions.  The returned value is whatever
+// the task's action populates as its output.
+func (r *Runtime) RunTaskOnce(ctx context.Context, wf *model.Workflow, taskID string, input interface{}) (interface{}, error) {
+	if wf == nil {
+		return nil, fmt.Errorf("workflow is nil")
+	}
+	// Locate the requested task definition.
+	task := wf.AllTasks()[taskID]
+	if task == nil {
+		return nil, fmt.Errorf("task %q not found in workflow %q", taskID, wf.Name)
+	}
+	if task.Action == nil {
+		return nil, fmt.Errorf("task %q has no action defined", taskID)
+	}
+	// Build an at-hoc execution describing the task.
+	exec := &execution.Execution{
+		ID:          uuid.New().String(),
+		AtHoc:       true,
+		Service:     task.Action.Service,
+		Method:      task.Action.Method,
+		Input:       input,
+		State:       execution.TaskStatePending,
+		ScheduledAt: clock.Now(),
+	}
+	// Submit to the runtime.
+	waitFn, err := r.ScheduleExecution(ctx, exec)
+	if err != nil {
+		return nil, err
+	}
+	// Block until completion (use a generous default timeout).
+	const defaultTimeout = 5 * time.Minute
+	exec, err = waitFn(defaultTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return exec.Output, nil
+}
 
 // Runtime represents a workflow engine runtime
 type Runtime struct {
@@ -136,6 +187,20 @@ func (r *Runtime) waitForExecution(
 			execution.TaskStateCancelled,
 			execution.TaskStatePaused:
 			return exec, nil
+		case execution.TaskStateWaitForApproval:
+			// If the task has been explicitly rejected we can finish right away – the
+			// execution will never proceed.
+			if exec.Approved != nil && !*exec.Approved {
+				return exec, nil
+			}
+		case execution.TaskStatePending:
+			// After a positive decision the approval service rewinds the State back to
+			// pending and republishes the message so that the processor can resume
+			// work.  We only finish early on explicit rejection to avoid an
+			// indefinite wait.
+			if exec.Approved != nil && !*exec.Approved {
+				return exec, nil
+			}
 		default:
 		}
 		if time.Now().After(deadline) {

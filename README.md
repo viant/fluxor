@@ -37,7 +37,7 @@ Fluxor is designed to provide a flexible, extensible workflow engine that can be
 - **Concurrency Control**: Control the level of parallelism in workflow execution
 - **Extensible Architecture**: Easily extend the engine with custom components
 - **Optional Human Approval**: Pause selected tasks until a human (or custom logic) approves them
-- **Ad-hoc Execution**: Run a single task or sub-pipeline on demand for quick tests, debugging or manual reruns without launching the full workflow
+- **Ad-hoc Execution**: Run a single task or sub-pipeline on demand for quick streaming, tests, debugging or manual reruns without launching the full workflow
 
 ## Architecture
 
@@ -329,32 +329,8 @@ pipeline:
           action:
             service: printer
             method: print
-
-
-### Ad-hoc Execution
-
-Sometimes you only want to run *one* task (or a small subset of the pipeline)
-to verify behaviour, re-process a failed item or perform a quick manual job.
-Fluxor exposes a convenience helper that executes a task outside the context
-of a full workflow run:
-
-```go
-taskID  := "transformCsv"
-input   := map[string]any{"file": "customers.csv"}
-
-// Execute the task once and wait synchronously for the result.
-output, err := runtime.RunTaskOnce(ctx, workflow, taskID, input)
-if err != nil {
-    log.Fatal(err)
-}
-fmt.Printf("%s output: %+v\n", taskID, output)
-```
-
-Under the hood the engine still uses the same allocator / processor / executor
-infrastructure so semantics stay identical⁠—you just avoid spinning up the
-entire parent workflow.
-          input:
-            message: "Order: $order"
+            input:
+              message: $order
 ```
 
 In this example, `processOrders` will spawn one `processOne` task for each element in `orders`, binding the current element to `$order` in each task.
@@ -364,6 +340,33 @@ resolved value **must** be a slice or array. If it evaluates to any other
 type (string, map, scalar, nil, …) Fluxor fails the task with an explicit
 error message and the workflow moves to its normal failure path (or retries
 if a retry-strategy is defined).
+
+
+
+### Ad-hoc Execution
+
+  Sometimes you only want to run *one* task (or a small subset of the pipeline)
+  to verify behaviour, re-process a failed item or perform a quick manual job.
+  Fluxor exposes a convenience helper that executes a task outside the context
+of a full workflow run:
+
+  ```go
+  taskID  := "transformCsv"
+input   := map[string]any{"file": "customers.csv"}
+
+  // Execute the task once and wait synchronously for the result.
+  output, err := runtime.RunTaskOnce(ctx, workflow, taskID, input)
+  if err != nil {
+  log.Fatal(err)
+}
+fmt.Printf("%s output: %+v\n", taskID, output)
+```
+
+Under the hood the engine still uses the same allocator / processor / executor
+infrastructure so semantics stay identical⁠—you just avoid spinning up the
+entire parent workflow.
+input:
+message: "Order: $order"
 
 
 ## Optional Task Approval & Policy Layer
