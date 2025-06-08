@@ -4,7 +4,7 @@ import "time"
 
 // Asset represents a file or directory in storage
 type Asset struct {
-	URL         string    `json:"url"`
+	Location    string    `json:"location"`
 	Name        string    `json:"Name"`
 	IsDir       bool      `json:"isDir"`
 	Mode        string    `json:"mode,omitempty"`

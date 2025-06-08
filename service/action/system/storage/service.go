@@ -30,7 +30,7 @@ func (s *Service) Methods() types.Signatures {
 	return []types.Signature{
 		{
 			Name:        "list",
-			Description: "Lists files and directories at the specified URL.",
+			Description: "Lists files and directories at the specified Location.",
 			Input:       reflect.TypeOf(&ListInput{}),
 			Output:      reflect.TypeOf(&ListOutput{}),
 		},

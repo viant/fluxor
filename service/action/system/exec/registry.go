@@ -16,10 +16,20 @@ func (s *Service) Name() string {
 func (s *Service) Methods() types.Signatures {
 	return []types.Signature{
 		{
-			Name:        "execute",
-			Description: "Executes a shell command on a remote host, or locally if no remote target is specified.",
-			Input:       reflect.TypeOf(&Input{}),
-			Output:      reflect.TypeOf(&Output{}),
+			Name: "execute",
+			Description: `Executes one or more shell commands local host.
+IMPORTANT – each entry in the commands array is started as an independent shell invocation.
+If you need to pass options/arguments to a single command, include them in the same string.
+Examples
+• Run a single command
+  "commands": ["ls -la /tmp"]
+• Execute several commands sequentially
+  "commands": [
+     "cd /var/log",
+     "grep -i error *.log > /tmp/errors.txt"
+  ]`,
+			Input:  reflect.TypeOf(&Input{}),
+			Output: reflect.TypeOf(&Output{}),
 		}}
 }
 

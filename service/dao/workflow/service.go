@@ -34,7 +34,7 @@ func (s *Service) DecodeYAML(encoded []byte) (*model.Workflow, error) {
 	return s.ParseWorkflow("", &node)
 }
 
-// Load loads a workflow from YAML at the specified URL
+// Load loads a workflow from YAML at the specified Location
 func (s *Service) Load(ctx context.Context, URL string) (*model.Workflow, error) {
 	ext := filepath.Ext(URL)
 	if ext == "" {
@@ -61,7 +61,7 @@ func (s *Service) ParseWorkflow(URL string, node *yaml.Node) (*model.Workflow, e
 		return nil, fmt.Errorf("failed to parse workflow from %s: %w", URL, err)
 	}
 
-	// Set name based on URL if not set
+	// Set name based on Location if not set
 	if workflowName := workflow.Name; workflowName == "" {
 		workflow.Name = generateAnonymousName()
 	}
@@ -77,7 +77,7 @@ func (s *Service) ParseWorkflow(URL string, node *yaml.Node) (*model.Workflow, e
 	return workflow, nil
 }
 
-// getWorkflowNameFromURL extracts workflow name from URL (file name without extension)
+// getWorkflowNameFromURL extracts workflow name from Location (file name without extension)
 func getWorkflowNameFromURL(URL string) string {
 	base := filepath.Base(URL)
 	return strings.TrimSuffix(base, filepath.Ext(base))

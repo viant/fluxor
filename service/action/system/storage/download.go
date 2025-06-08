@@ -22,7 +22,7 @@ type DownloadOutput struct {
 // Download downloads assets from specified URLs
 func (s *Service) Download(ctx context.Context, input *DownloadInput, output *DownloadOutput) error {
 	if len(input.Assets) == 0 {
-		return fmt.Errorf("at least one asset URL is required")
+		return fmt.Errorf("at least one asset Location is required")
 	}
 
 	downloadedAssets := make([]*Asset, 0, len(input.Assets))
@@ -53,7 +53,7 @@ func (s *Service) Download(ctx context.Context, input *DownloadInput, output *Do
 		}
 
 		asset := &Asset{
-			URL:         assetURL,
+			Location:    assetURL,
 			Name:        filepath.Base(assetURL),
 			IsDir:       source.IsDir(),
 			Size:        source.Size(),

@@ -67,16 +67,22 @@ func (s *Service) Execute(ctx context.Context, input *Input, output *Output) err
 	if timeoutDuration == 0 {
 		timeoutDuration = time.Minute
 	}
+	var errorCodeCmd string
+	var lastErrorCode int
 	for _, cmd := range input.Commands {
 		command := &Command{
 			Input: cmd,
 		}
-
 		stdout, stderr, exitCode := s.executeCommand(ctx, session, cmd, timeoutDuration)
 		command.Output = stdout
 		command.Stderr = stderr
 		command.Status = exitCode
 		commands = append(commands, command)
+
+		if exitCode != 0 {
+			lastErrorCode = exitCode
+			errorCodeCmd = cmd
+		}
 
 		if stdout != "" {
 			combinedStdout.WriteString(stdout)
@@ -101,6 +107,9 @@ func (s *Service) Execute(ctx context.Context, input *Input, output *Output) err
 	output.Stdout = strings.TrimSpace(combinedStdout.String())
 	output.Stderr = strings.TrimSpace(combinedStderr.String())
 	output.Status = lastExitCode
+	if lastErrorCode != 0 && output.Stderr == "" {
+		output.Stderr = fmt.Sprintf("command %s exited with non-zero exit code", errorCodeCmd)
+	}
 
 	return nil
 }

@@ -4,15 +4,15 @@ import (
 	"context"
 	"fmt"
 	"github.com/viant/afs"
+	"github.com/viant/afs/file"
 	"github.com/viant/afs/option"
 	"github.com/viant/afs/storage"
 	"github.com/viant/afs/url"
-	"path"
 )
 
 // ListInput defines parameters for listing assets
 type ListInput struct {
-	URL       string `json:"url" required:"true" description:"URL to list files from"`
+	Location  string `json:"location" required:"true" description:"Location to list files from"`
 	Recursive bool   `json:"recursive,omitempty" description:"List files recursively"`
 	PageSize  int    `json:"pageSize,omitempty" description:"Maximum number of results to return"`
 }
@@ -22,12 +22,12 @@ type ListOutput struct {
 	Assets []*Asset `json:"assets,omitempty" description:"List of assets found"`
 }
 
-// List lists files and directories at the specified URL
+// List lists files and directories at the specified Location
 func (s *Service) List(ctx context.Context, input *ListInput, output *ListOutput) error {
 	fs := afs.New()
 
-	if input.URL == "" {
-		return fmt.Errorf("URL is required")
+	if input.Location == "" {
+		return fmt.Errorf("Location is required")
 	}
 
 	listOptions := make([]storage.Option, 0)
@@ -41,16 +41,20 @@ func (s *Service) List(ctx context.Context, input *ListInput, output *ListOutput
 		listOptions = append(listOptions, option.NewPage(0, input.PageSize))
 	}
 
-	objects, err := fs.List(ctx, input.URL, listOptions...)
+	objects, err := fs.List(ctx, input.Location, listOptions...)
 	if err != nil {
-		return fmt.Errorf("failed to list objects at %s: %w", input.URL, err)
+		return fmt.Errorf("failed to list objects at %s: %w", input.Location, err)
 	}
 
 	assets := make([]*Asset, 0, len(objects))
 	for _, obj := range objects {
+		location := obj.URL()
+		if url.Scheme(location, file.Scheme) == file.Scheme {
+			location = url.Path(location)
+		}
 		asset := &Asset{
-			URL:         obj.URL(),
-			Name:        path.Base(obj.URL()),
+			Location:    location,
+			Name:        obj.Name(),
 			IsDir:       obj.IsDir(),
 			Size:        obj.Size(),
 			ModTime:     obj.ModTime(),

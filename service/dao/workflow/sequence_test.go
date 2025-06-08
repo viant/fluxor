@@ -15,7 +15,7 @@ pipeline:
     service: system/storage
     action: list
     with:
-      URL: "file://."
+      Location: "file://."
   - id: show
     service: printer
     action: print
@@ -57,7 +57,7 @@ pipeline:
       service: system/storage
       action: list
       with:
-        URL: "file://."
+        Location: "file://."
   - show:
       service: printer
       action: print

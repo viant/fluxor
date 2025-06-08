@@ -30,25 +30,25 @@ func (s *Service) Upload(ctx context.Context, input *UploadInput, output *Upload
 	uploadedAssets := make([]*Asset, 0, len(input.Assets))
 
 	for _, asset := range input.Assets {
-		if asset.URL == "" {
-			return fmt.Errorf("asset URL cannot be empty")
+		if asset.Location == "" {
+			return fmt.Errorf("asset Location cannot be empty")
 		}
 
-		err := fs.Upload(ctx, asset.URL, file.DefaultFileOsMode, bytes.NewReader(asset.Data))
+		err := fs.Upload(ctx, asset.Location, file.DefaultFileOsMode, bytes.NewReader(asset.Data))
 		if err != nil {
 			return err
 		}
-		object, err := fs.Object(ctx, asset.URL)
+		object, err := fs.Object(ctx, asset.Location)
 		if err != nil {
-			return fmt.Errorf("failed to get object for %s: %w", asset.URL, err)
+			return fmt.Errorf("failed to get object for %s: %w", asset.Location, err)
 		}
 		uploadedAsset := &Asset{
-			URL:         asset.URL,
-			Name:        filepath.Base(asset.URL),
+			Location:    asset.Location,
+			Name:        filepath.Base(asset.Location),
 			Size:        object.Size(),
 			ModTime:     object.ModTime(),
 			Mode:        object.Mode().String(),
-			ContentType: GetContentType(url.Path(asset.URL)),
+			ContentType: GetContentType(url.Path(asset.Location)),
 		}
 		uploadedAssets = append(uploadedAssets, uploadedAsset)
 	}
