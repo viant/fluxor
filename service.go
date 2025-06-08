@@ -58,7 +58,11 @@ func (s *Service) init(options []Option) {
 	}
 	s.ensureBaseSetup()
 	s.actions = extension.NewActions(s.extensionTypes...)
-	s.approvalService = memory.New(s.runtime.taskExecutionDao, memory.WithProcessDAO(s.runtime.processorDAO))
+	s.approvalService = memory.New(
+		s.runtime.taskExecutionDao,
+		memory.WithProcessDAO(s.runtime.processorDAO),
+		memory.WithExecutionQueue(s.queue),
+	)
 
 	s.executorOptions = append(s.executorOptions, texecutor.WithApprovalService(s.approvalService))
 	// Create executor after injecting approvalService option

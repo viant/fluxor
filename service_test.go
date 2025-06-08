@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	_ "github.com/viant/afs/embed"
 	"github.com/viant/fluxor"
+	"github.com/viant/fluxor/policy"
 	"github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/approval"
 	"github.com/viant/fluxor/service/executor"
@@ -113,9 +114,9 @@ func TestTemplate(t *testing.T) {
 	srv := fluxor.New(
 		fluxor.WithMetaFsOptions(&embedFS),
 		fluxor.WithMetaBaseURL("embed:///testdata"),
-		fluxor.WithExecutorOptions(executor.WithApprovalSkipPrefixes("printer.", "system.storage")),
+		fluxor.WithExecutorOptions(executor.WithApprovalSkipPrefixes("system.storage")),
 		//fluxor.WithStateListeners(func(s *execution.Session, key string, oldVal, newVal interface{}) {
-		//	fmt.Printf("State changed: key: '%v', from: %v: to: %v\n", key, oldVal, newVal)
+		//	fmt.Printf("State changewith d: key: '%v', from: %v: to: %v\n", key, oldVal, newVal)
 		//}),
 	)
 
@@ -134,9 +135,9 @@ func TestTemplate(t *testing.T) {
 	done := approval.AutoApprove(ctx, approvalSrv, 10*time.Millisecond)
 	defer done()
 	//
-	//ctx = policy.WithPolicy(ctx, &policy.Policy{ // only to copy into process
-	//	Mode: policy.ModeAsk,
-	//})
+	ctx = policy.WithPolicy(ctx, &policy.Policy{ // only to copy into process
+		Mode: policy.ModeAsk,
+	})
 	// Start the process with initial orders
 	process, wait, err := runtime.StartProcess(ctx, workflow, map[string]interface{}{
 		"orders": []interface{}{"apple", "banana", "cherry"},

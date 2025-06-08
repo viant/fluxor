@@ -27,6 +27,11 @@ type service struct {
 	// owning process store (optional – only needed when we want to update the
 	// execution embedded in the process' stack after an approval decision).
 	processDao dao.Service[string, execution.Process]
+
+	// execution queue (optional) – when set the service republishes approved
+	// executions so that the processor can continue processing ad-hoc tasks
+	// that are not otherwise scheduled by the allocator.
+	execQueue messaging.Queue[execution.Execution]
 }
 
 // key selectors – grab ID field
@@ -122,13 +127,16 @@ func (s *service) Decide(ctx context.Context, id string,
 
 		anExecution.Approved = &ok
 		anExecution.ApprovalReason = reason
-		if !ok {
-			anExecution.Error = fmt.Sprintf("action %s rejected: %s", request.Action, reason)
-		} else {
+		if ok {
+			// Positive decision – clear any previous error and reset State so that
+			// the task can be executed.
 			anExecution.Error = ""
+			anExecution.State = execution.TaskStatePending
+		} else {
+			// Rejection – mark as failed so that waiting callers can finish.
+			anExecution.Error = fmt.Sprintf("action %s rejected: %s", request.Action, reason)
+			anExecution.State = execution.TaskStateFailed
 		}
-		// Reset execution State so that allocator re-schedules it.
-		anExecution.State = execution.TaskStatePending
 
 		if err = s.executionDao.Save(ctx, anExecution); err != nil {
 			return nil, err
@@ -142,10 +150,17 @@ func (s *service) Decide(ctx context.Context, id string,
 				if ex := proc.LookupExecution(anExecution.TaskID); ex != nil {
 					ex.Approved = anExecution.Approved
 					ex.ApprovalReason = reason
-					ex.State = execution.TaskStatePending
+					ex.State = anExecution.State
 					_ = s.processDao.Save(ctx, proc)
 				}
 			}
+		}
+
+		// If the execution was approved and we have an execution queue, publish it
+		// so that the processor can pick it up.  This is especially important for
+		// ad-hoc executions that are not managed by the allocator.
+		if ok && s.execQueue != nil {
+			_ = s.execQueue.Publish(ctx, anExecution)
 		}
 	}
 

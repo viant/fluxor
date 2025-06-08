@@ -61,7 +61,9 @@ func AutoReject(ctx context.Context,
 	reason string,
 	interval time.Duration) func() {
 	return AutoDecider(ctx, svc,
-		func(*Request) (bool, string) { return false, reason }, interval)
+		func(*Request) (bool, string) {
+			return false, reason
+		}, interval)
 }
 
 // AutoExpire periodically checks pending requests and auto-rejects those whose
