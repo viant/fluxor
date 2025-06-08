@@ -37,6 +37,7 @@ Fluxor is designed to provide a flexible, extensible workflow engine that can be
 - **Concurrency Control**: Control the level of parallelism in workflow execution
 - **Extensible Architecture**: Easily extend the engine with custom components
 - **Optional Human Approval**: Pause selected tasks until a human (or custom logic) approves them
+- **Ad-hoc Execution**: Run a single task or sub-pipeline on demand for quick tests, debugging or manual reruns without launching the full workflow
 
 ## Architecture
 
@@ -328,6 +329,30 @@ pipeline:
           action:
             service: printer
             method: print
+
+
+### Ad-hoc Execution
+
+Sometimes you only want to run *one* task (or a small subset of the pipeline)
+to verify behaviour, re-process a failed item or perform a quick manual job.
+Fluxor exposes a convenience helper that executes a task outside the context
+of a full workflow run:
+
+```go
+taskID  := "transformCsv"
+input   := map[string]any{"file": "customers.csv"}
+
+// Execute the task once and wait synchronously for the result.
+output, err := runtime.RunTaskOnce(ctx, workflow, taskID, input)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Printf("%s output: %+v\n", taskID, output)
+```
+
+Under the hood the engine still uses the same allocator / processor / executor
+infrastructure so semantics stay identical⁠—you just avoid spinning up the
+entire parent workflow.
           input:
             message: "Order: $order"
 ```

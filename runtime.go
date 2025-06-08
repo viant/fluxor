@@ -94,6 +94,16 @@ func (r *Runtime) ScheduleExecution(ctx context.Context, exec *execution.Executi
 			return nil, err
 		}
 	}
+
+	// Handle ad-hoc executions (single task outside a workflow): register a
+	// synthetic task so that later look-ups succeed.
+	if exec.AtHoc {
+		if task := exec.AtHocTask(); task != nil {
+			aProcess.RegisterTask(task)
+			exec.TaskID = task.ID
+		}
+	}
+
 	exec.ProcessID = aProcess.ID
 	r.taskExecutionDao.Save(ctx, exec)
 	if err = r.queue.Publish(ctx, exec); err != nil {

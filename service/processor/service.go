@@ -444,7 +444,10 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 		// Retry handling (all other errors)
 		// ------------------------------------------------------------------
 		taskDef := process.LookupTask(anExecution.TaskID)
-		retryCfg := taskDef.Retry
+		var retryCfg *graph.Retry
+		if taskDef != nil {
+			retryCfg = taskDef.Retry
+		}
 		shouldRetry, delay := s.shouldRetry(retryCfg, anExecution.Attempts)
 		if shouldRetry {
 			anExecution.Attempts++

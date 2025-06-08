@@ -1,10 +1,9 @@
 .idea/
+.*/
 local_test.go
 bin/
 dist/
 go.sum
-.cache/
 tmp/
-.codex/
 AGENTS.md
 span.txt
