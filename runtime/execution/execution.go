@@ -31,9 +31,19 @@ type Execution struct {
 	RunAfter       *time.Time             `json:"runAfter,omitempty"`
 	DependsOn      []string               `json:"dependencies"`
 	Dependencies   map[string]TaskState   `json:"completed,omitempty"`
+	Service        string                 `json:"service,omitempty"`
+	Method         string                 `json:"method,omitempty"`
+	AtHoc          bool                   `json:"atHoc,omitempty"`
 	mux            sync.RWMutex           `json:"-"`
 	Approved       *bool                  `json:"approved,omitempty"`
 	ApprovalReason string                 `json:"approvedDecision,omitempty"` // "yes" or "no"
+}
+
+func (e *Execution) AtHocTask() *graph.Task {
+	if !e.AtHoc {
+		return nil
+	}
+	return &graph.Task{ID: e.Service + ":" + e.Method + "/" + e.ID, Name: e.Method, Namespace: e.Method, Action: &graph.Action{Method: e.Method, Service: e.Service, Input: e.Input}}
 }
 
 func (e *Execution) Context(eventType string, task *graph.Task) *event.Context {
@@ -216,6 +226,9 @@ func (e *Execution) Clone() *Execution {
 		t := *e.RunAfter
 		clone.RunAfter = &t
 	}
-
 	return &clone
+}
+
+func NewAtHocExecution(service, method string, input interface{}) (*Execution, error) {
+	return &Execution{AtHoc: true, Service: service, Method: method, Input: input}, nil
 }

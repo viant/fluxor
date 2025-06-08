@@ -109,6 +109,9 @@ type service struct {
 // Execute executes a task.
 func (s *service) Execute(ctx context.Context, anExecution *execution.Execution, process *execution.Process) error {
 	task := process.LookupTask(anExecution.TaskID)
+	if anExecution.AtHoc {
+		task = anExecution.AtHocTask()
+	}
 	if task == nil {
 		return ErrTaskNotFound
 	}
@@ -130,11 +133,10 @@ func (s *service) Execute(ctx context.Context, anExecution *execution.Execution,
 			}
 		}
 	}
-
 	return nil
 }
 
-func (s *service) execute(ctx context.Context, anExecution *execution.Execution, process *execution.Process, task *graph.Task) error {
+func (s *service) execute(ctx context.Context, anExecution *execution.Execution, aProcess *execution.Process, task *graph.Task) error {
 	action := task.Action
 	if action == nil {
 		// Nothing to execute.
@@ -147,12 +149,11 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 	spanName := fmt.Sprintf("task.execute %s.%s", action.Service, action.Method)
 	ctx, span := tracing.StartSpan(ctx, spanName, "INTERNAL")
 	span.WithAttributes(map[string]string{
-		"execution.id":  anExecution.ID,
-		"process.id":    process.ID,
-		"workflow.name": process.Name,
-		"task.id":       anExecution.TaskID,
-		"service":       action.Service,
-		"method":        action.Method,
+		"execution.id": anExecution.ID,
+		"aProcess.id":  anExecution.ProcessID,
+		"task.id":      anExecution.TaskID,
+		"service":      action.Service,
+		"method":       action.Method,
 	})
 
 	var spanErr error
@@ -178,8 +179,8 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 	// ------------------------------------------------------------------
 	// Evaluate persisted policy declaration (approval/deny lists)
 	var pol *policy.Policy
-	if process != nil && process.Policy != nil {
-		pol = policy.FromConfig(process.Policy)
+	if aProcess != nil && aProcess.Policy != nil {
+		pol = policy.FromConfig(aProcess.Policy)
 	}
 
 	if pol != nil {
@@ -245,9 +246,9 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 				// gives reviewers full visibility into the concrete arguments rather
 				// than the raw template.
 				expandedArgs := action.Input
-				sess := process.Session.TaskSession(anExecution.Data,
+				sess := aProcess.Session.TaskSession(anExecution.Data,
 					execution.WithConverter(s.converter),
-					execution.WithImports(process.Workflow.Imports...),
+					execution.WithImports(aProcess.Workflow.Imports...),
 					execution.WithTypes(s.actions.Types()))
 				if v, err := sess.Expand(action.Input); err == nil {
 					expandedArgs = v
@@ -283,9 +284,9 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 	}
 
 	// Prepare a task session.
-	session := process.Session.TaskSession(anExecution.Data,
+	session := aProcess.Session.TaskSession(anExecution.Data,
 		execution.WithConverter(s.converter),
-		execution.WithImports(process.Workflow.Imports...),
+		execution.WithImports(aProcess.Workflow.Imports...),
 		execution.WithTypes(s.actions.Types()))
 
 	if err = session.ApplyParameters(task.Init); err != nil {
@@ -301,12 +302,14 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 		return spanErr
 	}
 
-	taskInput := action.Input
-	if taskInput, err = session.Expand(action.Input); err != nil {
-		spanErr = err
-		return spanErr
+	taskInput := anExecution.Input
+	if taskInput == nil {
+		taskInput = action.Input
+		if taskInput, err = session.Expand(action.Input); err != nil {
+			spanErr = err
+			return spanErr
+		}
 	}
-
 	input, err := session.TypedValue(signature.Input, taskInput)
 	anExecution.Input = input
 	if err != nil {

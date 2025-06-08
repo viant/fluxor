@@ -12,6 +12,7 @@ import (
 // methods work with copies to eliminate data races between goroutines.
 type Service struct {
 	processes map[string]*execution.Process
+	done      map[string]*execution.Process
 	mux       sync.RWMutex
 }
 
@@ -27,7 +28,14 @@ func (s *Service) Save(_ context.Context, p *execution.Process) error {
 
 	s.mux.Lock()
 	defer s.mux.Unlock()
-
+	switch p.State {
+	case execution.StateCompleted, execution.StateFailed:
+		if _, ok := s.processes[p.ID]; ok {
+			delete(s.processes, p.ID)
+		}
+		s.done[p.ID] = p
+		return nil
+	}
 	if existing, ok := s.processes[p.ID]; ok && existing != nil {
 		existing.CopyFrom(p)
 	} else {
@@ -40,11 +48,14 @@ func (s *Service) Load(_ context.Context, id string) (*execution.Process, error)
 	if id == "" {
 		return nil, dao.ErrInvalidID
 	}
-
 	s.mux.RLock()
 	p, ok := s.processes[id]
 	s.mux.RUnlock()
-
+	if !ok {
+		s.mux.RLock()
+		p, ok = s.done[id]
+		s.mux.RUnlock()
+	}
 	if !ok {
 		return nil, dao.ErrNotFound
 	}
@@ -81,7 +92,7 @@ func (s *Service) List(_ context.Context, parameters ...*dao.Parameter) ([]*exec
 }
 
 func New() *Service {
-	return &Service{processes: map[string]*execution.Process{}}
+	return &Service{processes: map[string]*execution.Process{}, done: map[string]*execution.Process{}}
 }
 
 // ---------------------------------------------------------------------------

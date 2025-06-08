@@ -3,10 +3,11 @@ package fluxor
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/viant/fluxor/model"
-	execution "github.com/viant/fluxor/runtime/execution"
+	"github.com/viant/fluxor/runtime/execution"
 	aworkflow "github.com/viant/fluxor/service/action/workflow"
 	"github.com/viant/fluxor/service/allocator"
 	"github.com/viant/fluxor/service/dao"
@@ -32,9 +33,18 @@ func (r *Runtime) LoadWorkflow(ctx context.Context, location string) (*model.Wor
 	return r.workflowDAO.Load(ctx, location)
 }
 
-// DecideYAMLWorkflow loads a workflow
+// DecodeYAMLWorkflow loads a workflow
 func (r *Runtime) DecodeYAMLWorkflow(data []byte) (*model.Workflow, error) {
 	return r.workflowDAO.DecodeYAML(data)
+}
+
+// ProcessFromContext return process from context
+func (r *Runtime) ProcessFromContext(ctx context.Context) *execution.Process {
+	// If the incoming context contains a running parent process, record its ID
+	if parentProc := execution.ContextValue[*execution.Process](ctx); parentProc != nil {
+		return parentProc
+	}
+	return nil
 }
 
 // StartProcess starts a new process
@@ -72,16 +82,33 @@ func (r *Runtime) Process(ctx context.Context, id string) (*execution.Process, e
 	return r.processorDAO.Load(ctx, id)
 }
 
-// QueueExecution publishes an ad-hoc execution to the processor queue.
-func (r *Runtime) QueueExecution(ctx context.Context, exec *execution.Execution) error {
-	return r.queue.Publish(ctx, exec)
+func (r *Runtime) ScheduleExecution(ctx context.Context, exec *execution.Execution) (func(duration time.Duration) (*execution.Execution, error), error) {
+	var err error
+	if exec.ID == "" {
+		exec.ID = uuid.New().String()
+	}
+	aProcess := r.ProcessFromContext(ctx)
+	if aProcess == nil {
+		aProcess, err = r.processor.NewProcess(ctx, exec.ID, &model.Workflow{}, map[string]interface{}{})
+		if err != nil {
+			return nil, err
+		}
+	}
+	exec.ProcessID = aProcess.ID
+	r.taskExecutionDao.Save(ctx, exec)
+	if err = r.queue.Publish(ctx, exec); err != nil {
+		return nil, err
+	}
+	return func(timeout time.Duration) (*execution.Execution, error) {
+		exec, err = r.waitForExecution(ctx, exec.ID, timeout)
+		if err != nil {
+			return nil, err
+		}
+		return exec, nil
+	}, nil
 }
 
-// WaitForExecution waits until the execution reaches a terminal state or the timeout expires.
-// WaitForExecution polls the task-execution DAO until the execution enters a terminal
-// or paused/approval state, or the timeout expires.  It returns the execution as soon
-// as its State is one of Completed, Failed, Skipped, Cancelled, Paused, or WaitForApproval.
-func (r *Runtime) WaitForExecution(
+func (r *Runtime) waitForExecution(
 	ctx context.Context,
 	execID string,
 	timeout time.Duration,
@@ -100,9 +127,6 @@ func (r *Runtime) WaitForExecution(
 			execution.TaskStatePaused:
 			return exec, nil
 		default:
-			if exec.State.IsWaitForApproval() {
-				return exec, nil
-			}
 		}
 		if time.Now().After(deadline) {
 			return exec, fmt.Errorf("timeout waiting for execution %q", execID)
@@ -114,11 +138,6 @@ func (r *Runtime) WaitForExecution(
 // Execution returns an execution
 func (r *Runtime) Execution(ctx context.Context, id string) (*execution.Execution, error) {
 	return r.taskExecutionDao.Load(ctx, id)
-}
-
-// Processes saves execution
-func (r *Runtime) SaveExecution(ctx context.Context, anExecution *execution.Execution) error {
-	return r.taskExecutionDao.Save(ctx, anExecution)
 }
 
 // Processes returns a list of processes

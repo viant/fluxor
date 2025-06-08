@@ -226,18 +226,10 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	}
 	span.WithAttributes(map[string]string{"process.id": processID})
 
-	// Create the process
-	aProcess = execution.NewProcess(processID, workflow.Name, workflow, init)
-	aProcess.Ctx = ctx
-	aProcess.Session.RegisterListeners(s.sessListeners...)
-	aProcess.Session.RegisterWhenListeners(s.whenListeners...)
-
-	// Propagate policy (if any) from the incoming context so that executor can
-	// enforce it later on.
-	if p := policy.FromContext(ctx); p != nil {
-		aProcess.Policy = policy.ToConfig(p)
+	aProcess, err = s.NewProcess(ctx, processID, workflow, init)
+	if err != nil {
+		return nil, err
 	}
-
 	// Start a parent tracing span covering the whole process lifetime
 	ctx, procSpan := tracing.StartSpan(ctx, fmt.Sprintf("process.run %s", workflow.Name), "INTERNAL")
 	procSpan.WithAttributes(map[string]string{"process.id": processID, "workflow.name": workflow.Name})
@@ -252,20 +244,36 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	if workflow.Init != nil {
 		aProcess.Session.ApplyParameters(workflow.Init)
 	}
+
 	anExecution := execution.NewExecution(processID, nil, workflow.Pipeline)
 	aProcess.Push(anExecution)
 	// Record initial task allocation in progress tracker.
 	progress.UpdateCtx(ctx, progress.Delta{Total: 1, Pending: 1})
 
-	// Set aProcess state to running
-	aProcess.SetState(execution.StateRunning)
-
-	if err = s.processDAO.Save(ctx, aProcess); err != nil {
-		err = fmt.Errorf("failed to save process: %w", err)
-		return
-	}
 	// No need to schedule tasks here - allocator will pick up
 	return aProcess, nil
+}
+
+func (s *Service) NewProcess(ctx context.Context, processID string, workflow *model.Workflow, init map[string]interface{}) (*execution.Process, error) {
+	// Create the process
+	aProcess := execution.NewProcess(processID, workflow.Name, workflow, init)
+	aProcess.Ctx = ctx
+	aProcess.Session.RegisterListeners(s.sessListeners...)
+	aProcess.Session.RegisterWhenListeners(s.whenListeners...)
+
+	// Propagate policy (if any) from the incoming context so that executor can
+	// enforce it later on.
+	if p := policy.FromContext(ctx); p != nil {
+		aProcess.Policy = policy.ToConfig(p)
+	}
+
+	// Set aProcess state to running
+	aProcess.SetState(execution.StateRunning)
+	var err error
+	if err = s.processDAO.Save(ctx, aProcess); err != nil {
+		err = fmt.Errorf("failed to save process: %w", err)
+	}
+	return aProcess, err
 }
 
 // GetProcess retrieves a process by ID
@@ -497,7 +505,7 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 	}
 
 	task := process.LookupTask(anExecution.TaskID)
-	if task.IsAutoPause() {
+	if task != nil && task.IsAutoPause() {
 		anExecution.Pause()
 	} else {
 		anExecution.Complete()

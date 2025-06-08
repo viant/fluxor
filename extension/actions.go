@@ -51,7 +51,6 @@ func (s *Actions) Register(service types.Service) error {
 	s.services[service.Name()] = service
 	rType := TypeServiceOf(service)
 	s.byType[rType] = service
-
 	return nil
 }
 
