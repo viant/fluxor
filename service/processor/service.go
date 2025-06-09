@@ -449,7 +449,7 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 			retryCfg = taskDef.Retry
 		}
 		shouldRetry, delay := s.shouldRetry(retryCfg, anExecution.Attempts)
-		if shouldRetry {
+		if shouldRetry && !anExecution.AtHoc {
 			anExecution.Attempts++
 			runAt := time.Now().Add(delay)
 			anExecution.RunAfter = &runAt
@@ -460,6 +460,8 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 
 			return message.Ack()
 		}
+		anExecution.State = execution.TaskStateFailed
+		anExecution.Error = err.Error()
 
 		// Give up – mark as failed
 		progress.UpdateCtx(process.Ctx, progress.Delta{Running: -1, Failed: +1})
