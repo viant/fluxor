@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"github.com/viant/fluxor/service/approval"
 	"log"
+	"reflect"
 	"strings"
 	"time"
 
@@ -300,6 +301,10 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 	if err != nil {
 		spanErr = err
 		return spanErr
+	}
+	if signature.Output.Kind() == reflect.Struct && signature.Output.NumField() == 0 {
+		var m = map[string]interface{}{}
+		output = &m
 	}
 
 	taskInput := anExecution.Input
