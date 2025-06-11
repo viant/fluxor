@@ -303,8 +303,8 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 		return spanErr
 	}
 	if signature.Output.Kind() == reflect.Struct && signature.Output.NumField() == 0 {
-		var m = map[string]interface{}{}
-		output = &m
+		var m = [1]interface{}{}
+		output = &m[0]
 	}
 
 	taskInput := anExecution.Input
