@@ -281,7 +281,7 @@ func (l *Service) LoadWithURL(ctx context.Context, URL string, v interface{}) er
 
 func (l *Service) getURL(path string) string {
 	URL := path
-	if url.Scheme(URL, "") != "" {
+	if url.Scheme(URL, "") != "" || !url.IsRelative(path) {
 		return URL
 	}
 	if l.baseURL != "" {
