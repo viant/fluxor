@@ -132,7 +132,7 @@ func (l *Service) getImportPathAndKey(ctx context.Context, value string) (path s
 		} else { //default yaml
 			path += ".yaml"
 		}
-	} else if ext != ".yaml" && ext != ".yml" && ext != ".txt" {
+	} else if ext != ".yaml" && ext != ".yml" && ext != ".txt" && ext != ".vm" {
 		return "", "", fmt.Errorf("unsupported file extension: %s", ext)
 	}
 	return path, key, nil
