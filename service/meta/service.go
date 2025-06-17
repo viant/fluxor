@@ -142,6 +142,15 @@ func (l *Service) getImportPathAndKey(ctx context.Context, value string) (path s
 // It resolves the file path, downloads the file, and then either unmarshals YAML content or loads plain text.
 func (l *Service) processNode(ctx context.Context, node *yaml.Node, baseDir string) error {
 	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" {
+
+		if isPathDirective(node.Value) {
+			importPath, _, err := l.getImportPathAndKey(ctx, node.Value)
+			if err != nil {
+				return err
+			}
+			node.Value = importPath
+			return nil
+		}
 		if isImportDirective(node.Value) {
 			importPath, key, err := l.getImportPathAndKey(ctx, node.Value)
 			if err != nil {
@@ -204,6 +213,11 @@ func (l *Service) processNode(ctx context.Context, node *yaml.Node, baseDir stri
 // isImportDirective checks if a string is an $import directive.
 func isImportDirective(value string) bool {
 	return strings.HasPrefix(strings.TrimSpace(value), "$import")
+}
+
+// isImportDirective checks if a string is an $import directive.
+func isPathDirective(value string) bool {
+	return strings.HasPrefix(strings.TrimSpace(value), "$path")
 }
 
 // getNodeByKey navigates through the YAML node to find the node under the specified key path.
