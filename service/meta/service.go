@@ -104,6 +104,7 @@ func (l *Service) resolveDependencies(ctx context.Context, node *yaml.Node, base
 // It accepts YAML (.yaml or .yml) and text (.txt) files. If no extension is provided, it defaults to .yaml.
 func (l *Service) getImportPathAndKey(ctx context.Context, value string) (path string, key string, err error) {
 	value = strings.TrimSpace(value)
+
 	if !isImportDirective(value) {
 		return "", "", fmt.Errorf("not an import directive: %s", value)
 	}
@@ -144,11 +145,8 @@ func (l *Service) processNode(ctx context.Context, node *yaml.Node, baseDir stri
 	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" {
 
 		if isPathDirective(node.Value) {
-			importPath, _, err := l.getImportPathAndKey(ctx, node.Value)
-			if err != nil {
-				return err
-			}
-			node.Value = importPath
+			node.Value = node.Value[len("$path(") : len(node.Value)-1]
+			node.Value = url.Join(baseDir, node.Value)
 			return nil
 		}
 		if isImportDirective(node.Value) {
