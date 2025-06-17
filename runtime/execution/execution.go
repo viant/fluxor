@@ -147,6 +147,9 @@ func (e *Execution) Merge(execution *Execution) {
 	if execution.Error != "" {
 		e.Error = execution.Error
 	}
+	if execution.Attempts != 0 {
+		e.Attempts = execution.Attempts
+	}
 	if execution.StartedAt != nil {
 		e.StartedAt = execution.StartedAt
 	}
