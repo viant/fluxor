@@ -14,24 +14,22 @@ import (
 
 	"github.com/viant/scy/cred/secret"
 	"strings"
-	"sync"
 )
 
+const timeoutCode = -101
+
 // Service struct for executing terminal commands
-type Service struct {
-	sessions map[string]*sessionInfo
-	mux      sync.Mutex
-}
+type Service struct{}
 
 type sessionInfo struct {
+	id      string
 	service *gosh.Service
+	close   func()
 }
 
 // New creates a new Service instance
 func New() *Service {
-	return &Service{
-		sessions: make(map[string]*sessionInfo),
-	}
+	return &Service{}
 }
 
 // Execute executes terminal commands on the target system
@@ -43,6 +41,7 @@ func (s *Service) Execute(ctx context.Context, input *Input, output *Output) err
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
+	defer session.close()
 
 	// Set working directory if specified
 	if input.Directory != "" {
@@ -65,7 +64,7 @@ func (s *Service) Execute(ctx context.Context, input *Input, output *Output) err
 
 	timeoutDuration := time.Duration(input.TimeoutMs) * time.Millisecond
 	if timeoutDuration == 0 {
-		timeoutDuration = time.Minute
+		timeoutDuration = 10 * time.Minute
 	}
 	var errorCodeCmd string
 	var lastErrorCode int
@@ -110,7 +109,6 @@ func (s *Service) Execute(ctx context.Context, input *Input, output *Output) err
 	if lastErrorCode != 0 && output.Stderr == "" {
 		output.Stderr = fmt.Sprintf("command %s exited with non-zero exit code", errorCodeCmd)
 	}
-
 	return nil
 }
 
@@ -121,7 +119,9 @@ func (s *Service) executeCommand(ctx context.Context, session *sessionInfo, comm
 	stdout, status, err := session.service.Run(ctx, command, runner.WithTimeout(int(duration.Milliseconds())))
 	elapsed := time.Now().Sub(started)
 	if elapsed > duration && err == nil {
-		err = fmt.Errorf("command %v timed out after: %s", command, elapsed)
+		err = fmt.Errorf("command %v timed out after: %s", command, elapsed.String())
+		status = timeoutCode
+		return stdout, err.Error(), status
 	}
 
 	if status == 0 {
@@ -136,14 +136,6 @@ func (s *Service) executeCommand(ctx context.Context, session *sessionInfo, comm
 // getSession retrieves an existing session or creates a new one
 func (s *Service) getSession(ctx context.Context, host *system.Host, env map[string]string) (*sessionInfo, error) {
 	sessionID := host.URL
-
-	s.mux.Lock()
-	defer s.mux.Unlock()
-
-	if session, ok := s.sessions[sessionID]; ok {
-		return session, nil
-	}
-
 	// Create new session
 	var service *gosh.Service
 	var err error
@@ -177,8 +169,12 @@ func (s *Service) getSession(ctx context.Context, host *system.Host, env map[str
 	}
 	session := &sessionInfo{
 		service: service,
+		id:      sessionID,
+		close: func() {
+			_ = service.Close()
+		},
 	}
-	s.sessions[sessionID] = session
+	//s.sessions[sessionID] = session
 	return session, nil
 }
 
@@ -198,18 +194,5 @@ func (s *Service) getSSHConfig(ctx context.Context, host *system.Host) (*ssh.Cli
 
 // Close releases all sessions held by this service
 func (s *Service) Close(ctx context.Context) error {
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	var errs []string
-	for id, session := range s.sessions {
-		if err := session.service.Close(); err != nil {
-			errs = append(errs, fmt.Sprintf("failed to close session %s: %v", id, err))
-		}
-	}
-	s.sessions = make(map[string]*sessionInfo)
-	if len(errs) > 0 {
-		return fmt.Errorf("errors closing sessions: %s", strings.Join(errs, "; "))
-	}
-
 	return nil
 }
