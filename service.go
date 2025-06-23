@@ -11,6 +11,7 @@ import (
 	"github.com/viant/fluxor/service/action/nop"
 	"github.com/viant/fluxor/service/action/printer"
 	"github.com/viant/fluxor/service/action/system/exec"
+	"github.com/viant/fluxor/service/action/system/patch"
 	asecret "github.com/viant/fluxor/service/action/system/secret"
 	astorage "github.com/viant/fluxor/service/action/system/storage"
 	aworkflow "github.com/viant/fluxor/service/action/workflow"
@@ -80,8 +81,10 @@ func (s *Service) init(options []Option) {
 		processor.WithWhenListeners(s.whenListeners...),
 		processor.WithTaskExecutionDAO(s.runtime.taskExecutionDao),
 		processor.WithProcessDAO(s.runtime.processorDAO))
+
 	s.actions.Register(printer.New())
 	s.actions.Register(exec.New())
+	s.actions.Register(patch.New())
 	s.actions.Register(astorage.New())
 	s.actions.Register(asecret.New())
 	s.actions.Register(ainput.New())

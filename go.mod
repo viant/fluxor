@@ -6,6 +6,8 @@ toolchain go1.23.7
 
 require (
 	github.com/google/uuid v1.6.0
+	github.com/pmezard/go-difflib v1.0.0
+	github.com/sourcegraph/go-diff v0.7.0
 	github.com/stretchr/testify v1.10.0
 	github.com/viant/afs v1.26.2
 	github.com/viant/bindly v0.1.0
@@ -39,7 +41,6 @@ require (
 	github.com/lestrrat-go/jwx v1.2.29 // indirect
 	github.com/lestrrat-go/option v1.0.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/viant/tagly v0.2.0 // indirect
 	github.com/viant/xreflect v0.7.2 // indirect
 	github.com/viant/xunsafe v0.9.3-0.20240530173106-69808f27713b // indirect

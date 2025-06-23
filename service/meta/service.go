@@ -24,19 +24,19 @@ type Service struct {
 // Load reads the YAML file at the given path, resolves $import directives,
 // and decodes the result into the provided Go variable v.
 func (l *Service) Load(ctx context.Context, path string, v interface{}) error {
-	URL := l.getURL(path)
+	URL := l.GetURL(path)
 	return l.LoadWithURL(ctx, URL, v)
 }
 
 func (l *Service) Exists(ctx context.Context, path string) (bool, error) {
-	URL := l.getURL(path)
+	URL := l.GetURL(path)
 
 	return l.fs.Exists(ctx, URL, l.options...)
 }
 
 func (l *Service) List(ctx context.Context, path string) ([]string, error) {
 	var result []string
-	URL := l.getURL(path)
+	URL := l.GetURL(path)
 	objects, err := l.fs.List(ctx, URL, l.options...)
 	if err != nil {
 		return nil, err
@@ -51,7 +51,7 @@ func (l *Service) List(ctx context.Context, path string) ([]string, error) {
 }
 
 func (l *Service) Download(ctx context.Context, path string) ([]byte, error) {
-	URL := l.getURL(path)
+	URL := l.GetURL(path)
 	return l.fs.DownloadWithURL(ctx, URL, l.options...)
 }
 
@@ -291,7 +291,8 @@ func (l *Service) LoadWithURL(ctx context.Context, URL string, v interface{}) er
 	return err
 }
 
-func (l *Service) getURL(path string) string {
+// GetURL returns URL for the paath
+func (l *Service) GetURL(path string) string {
 	URL := path
 	if url.Scheme(URL, "") != "" || !url.IsRelative(path) {
 		return URL
