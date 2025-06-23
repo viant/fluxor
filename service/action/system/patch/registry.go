@@ -29,8 +29,8 @@ func (s *Service) Name() string { return Name }
 func (s *Service) Methods() types.Signatures {
 	return []types.Signature{
 		{
-			Name:        "diff_apply",
-			Description: "Applies a unified-diff patch to the local filesystem within the current session (auto-created on first use).",
+			Name:        "apply",
+			Description: "Applies a standard unified-diff patch (---/+++ headers, @@ hunks) to the local filesystem within the current session (auto-created on first use).",
 			Input:       reflect.TypeOf(&ApplyInput{}),
 			Output:      reflect.TypeOf(&ApplyOutput{}),
 		},
@@ -42,7 +42,7 @@ func (s *Service) Methods() types.Signatures {
 		},
 		{
 			Name:        "commit",
-			Description: "Commits all pending changes in the current patch session and clears the session.",
+			Description: "Commits  discards the rollback information, clears session.",
 			Input:       reflect.TypeOf(&EmptyInput{}),
 			Output:      reflect.TypeOf(&EmptyOutput{}),
 		},
@@ -77,7 +77,20 @@ func (s *Service) Method(name string) (types.Executable, error) {
 
 // ApplyInput is the payload for Service.apply
 type ApplyInput struct {
-	Patch string `json:"patch" description:"Unified diff/patch text to apply"`
+	// Patch must be in the *standard* unified-diff format as produced by
+	// tools such as `git diff` or `diff -u`.
+	// A valid payload therefore starts with file header lines, for example:
+	//
+	//     --- a/path/to/file.txt
+	//     +++ b/path/to/file.txt
+	//     @@ -10,2 +10,3 @@
+	//     -old line
+	//     +new line
+	//
+	// and continues with the usual @@ hunk blocks.  Multi-file patches are
+	// accepted as well.  The service applies the patch relative to the
+	// current working directory of the Fluxor runtime.
+	Patch string `json:"patch" description:"Unified-diff text (---/+++ file headers with @@ hunk markers) to apply"`
 }
 
 // ApplyOutput summarises the changes applied.
@@ -90,7 +103,7 @@ type DiffInput struct {
 	OldContent   string `json:"old" description:"Original file content"`
 	NewContent   string `json:"new" description:"Updated file content"`
 	Path         string `json:"path,omitempty" description:"Display path for diff headers"`
-	ContextLines int    `json:"contextLines,omitempty" description:"Number of context lines to include in diff"`
+	ContextLines int    `json:"contextLines,omitempty" description:"Number of context lines to include in diff (default 3)"`
 }
 
 // DiffOutput is identical to DiffResult, re-exported for JSON tags.
