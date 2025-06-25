@@ -30,7 +30,7 @@ func (s *Service) Methods() types.Signatures {
 	return []types.Signature{
 		{
 			Name:        "apply",
-			Description: "Applies a standard unified-diff patch (---/+++ headers, @@ hunks) to the local filesystem within the current session (auto-created on first use).",
+			Description: "Applies a standard unified-diff patch (---/+++ headers, @@ hunks) to the local filesystem within the current session (auto-created on first use).For new files, create a patch with '--- /dev/null\\n+++ b/path/to/file.go\\n@@ -0,0 +1,N @@\\n+package main\\n...' where each line from the original is prefixed with '+' and N is the number of lines.",
 			Input:       reflect.TypeOf(&ApplyInput{}),
 			Output:      reflect.TypeOf(&ApplyOutput{}),
 		},
