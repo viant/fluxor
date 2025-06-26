@@ -18,8 +18,8 @@ func (s *Service) Methods() types.Signatures {
 		{
 			Name: "execute",
 			Description: `Executes one or more shell commands local host.
-IMPORTANT – each entry in the commands array is started as an independent shell invocation.
-If you need to pass options/arguments to a single command, include them in the same string.
+When using system_exec-execute, supply "directory" or start command with command:["cd <workdir>", "...."]
+Each execution is ephemeral and starts in a fresh environment, so context must be explicitly re-established on every call.
 Examples
 • Run a single command
   "commands": ["ls -la /tmp"]
@@ -27,7 +27,8 @@ Examples
   "commands": [
      "cd /var/log",
      "grep -i error *.log > /tmp/errors.txt"
-  ]`,
+  ]
+` + "Note:\nDO NOT USE `ls -R`, `find`, `grep`  in any form as this will lead to a very slow response, and exceeding context window\nUse \\`rg\\` and \\`rg --files\\`.\nwhen using rg always use --files or --search-path\n",
 			Input:  reflect.TypeOf(&Input{}),
 			Output: reflect.TypeOf(&Output{}),
 		}}

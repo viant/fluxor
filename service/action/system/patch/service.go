@@ -1,31 +1,14 @@
-// onpatch: transactional file patching service with rollback support.
-//
-// This package exposes:
-//   - Session‑scoped file operations (Add, Delete, Move, Update)
-//   - Diff generation (F‑04)
-//   - Unified‑patch application (F‑03)
-//
-// Key change in this revision ➜ **each mutating call now stores its own unique
-// backup snapshot**, preventing the original‑overwrite bug when the same file
-// is patched multiple times within a single session.
-//
-// External deps (add to go.mod):
-//
-//	github.com/pmezard/go-difflib/difflib
-//	github.com/sourcegraph/go-diff/diff
-//
-// Example:
-//
-//	s, _ := onpatch.NewSession()
-//	_ = s.Update("foo.txt", []byte("v1\n"))
-//	_ = s.Update("foo.txt", []byte("v2\n")) // second update gets its own backup
-//	_ = s.Rollback() // restores original pre‑session content
 package patch
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/viant/afs"
+	"github.com/viant/afs/file"
+	"github.com/viant/afs/url"
 	"io"
 	"os"
 	"path/filepath"
@@ -33,20 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pmezard/go-difflib/difflib"
 	sgdiff "github.com/sourcegraph/go-diff/diff"
 )
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Diff generation (F‑04)
-// ──────────────────────────────────────────────────────────────────────────────
-
-type DiffStats struct {
-	FilesChanged int
-	Insertions   int
-	Deletions    int
-	Hunks        int
-}
 
 type DiffResult struct {
 	Patch string
@@ -54,45 +25,6 @@ type DiffResult struct {
 }
 
 var ErrNoChange = errors.New("no change between old and new")
-
-func GenerateDiff(old, new []byte, path string, contextLines int) (DiffResult, error) {
-	if bytes.Equal(old, new) {
-		return DiffResult{}, ErrNoChange
-	}
-	if path == "" {
-		path = "file"
-	}
-	if contextLines <= 0 {
-		contextLines = 3
-	}
-
-	ud := difflib.UnifiedDiff{
-		A:        difflib.SplitLines(string(old)),
-		B:        difflib.SplitLines(string(new)),
-		FromFile: "a/" + path,
-		ToFile:   "b/" + path,
-		Context:  contextLines,
-	}
-
-	patch, err := difflib.GetUnifiedDiffString(ud)
-	if err != nil {
-		return DiffResult{}, fmt.Errorf("diff generation: %w", err)
-	}
-
-	stats := DiffStats{FilesChanged: 1}
-	for _, l := range strings.Split(patch, "\n") {
-		switch {
-		case strings.HasPrefix(l, "@@"):
-			stats.Hunks++
-		case strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++"):
-			stats.Insertions++
-		case strings.HasPrefix(l, "-") && !strings.HasPrefix(l, "---"):
-			stats.Deletions++
-		}
-	}
-
-	return DiffResult{Patch: patch, Stats: stats}, nil
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Session engine
@@ -116,6 +48,7 @@ type rollbackEntry struct {
 
 type Session struct {
 	ID        string
+	fs        afs.Service
 	tempDir   string
 	rollbacks []rollbackEntry
 	committed bool
@@ -123,27 +56,49 @@ type Session struct {
 }
 
 func NewSession() (*Session, error) {
-	tmp, err := os.MkdirTemp("", "onpatch‑*")
-	if err != nil {
+	fs := afs.New()
+	ctx := context.Background()
+
+	// Create a unique temporary directory using the OS-reported temp dir so that
+	// the location can be overridden in constrained execution environments
+	// via the TMPDIR environment variable. The original implementation relied
+	// on the hard-coded /tmp path which may not be writable on some systems
+	// (e.g. sandboxed CI runners). By switching to os.TempDir we respect the
+	// host configuration while preserving the file:// scheme expected by the
+	// rest of the code.
+
+	baseTempDir := os.TempDir()
+	if baseTempDir == "" {
+		baseTempDir = "/tmp" // Fallback to the conventional location
+	}
+
+	// Keep the leading slash so that the resulting URI looks like
+	// file:///path/onpatch-<uuid>
+	tmp := fmt.Sprintf("file://%s/onpatch-%s", baseTempDir, uuid.NewString())
+	if err := fs.Create(ctx, tmp, file.DefaultDirOsMode, true); err != nil {
 		return nil, err
 	}
-	return &Session{ID: filepath.Base(tmp), tempDir: tmp}, nil
+
+	return &Session{ID: filepath.Base(tmp), tempDir: tmp, fs: fs}, nil
 }
 
 // backup now stores **one snapshot per invocation** using a timestamp‑suffix to
 // avoid overwriting when the same file is modified multiple times.
-func (s *Session) backup(path string) (string, error) {
-	data, err := os.ReadFile(path)
+func (s *Session) backup(ctx context.Context, path string) (string, error) {
+	data, err := s.fs.DownloadWithURL(ctx, path)
 	if err != nil {
 		return "", err
 	}
 	rel := strings.TrimPrefix(path, string(os.PathSeparator))
 	unique := fmt.Sprintf("%s.%d.bak", rel, time.Now().UnixNano())
-	dst := filepath.Join(s.tempDir, unique)
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	dst := url.Join(s.tempDir, unique)
+
+	parent, _ := url.Split(dst, file.Scheme)
+	if err := s.fs.Create(ctx, parent, file.DefaultDirOsMode, true); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(dst, data, 0o644); err != nil {
+
+	if err := s.fs.Upload(ctx, dst, file.DefaultFileOsMode, bytes.NewReader(data)); err != nil {
 		return "", err
 	}
 	return dst, nil
@@ -156,124 +111,141 @@ func (s *Session) assertActive() error {
 	return nil
 }
 
-func (s *Session) Delete(path string) error {
+func (s *Session) Delete(ctx context.Context, path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := s.assertActive(); err != nil {
-		return err
-	}
-	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("delete: %w", err)
 	}
-	backup, err := s.backup(path)
-	if err != nil {
-		return err
+	exists, err := s.fs.Exists(ctx, path)
+	if err != nil || !exists {
+		return fmt.Errorf("delete: %w", err)
 	}
-	if err := os.Remove(path); err != nil {
-		return err
+	backup, err := s.backup(ctx, path)
+	if err != nil {
+		return fmt.Errorf("delete: %w", err)
+	}
+	if err := s.fs.Delete(ctx, path); err != nil {
+		return fmt.Errorf("delete: %w", err)
 	}
 	s.rollbacks = append(s.rollbacks, rollbackEntry{action: Delete, path: path, tempCopy: backup})
 	return nil
 }
 
-func (s *Session) Move(src, dst string) error {
+func (s *Session) Move(ctx context.Context, src, dst string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := s.assertActive(); err != nil {
 		return err
 	}
-	if _, err := os.Stat(src); err != nil {
+	exists, err := s.fs.Exists(ctx, src)
+	if err != nil || !exists {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+
+	parent, _ := url.Split(dst, file.Scheme)
+	if err := s.fs.Create(ctx, parent, file.DefaultDirOsMode, true); err != nil {
 		return err
 	}
-	if err := os.Rename(src, dst); err != nil {
+
+	if err := s.fs.Move(ctx, src, dst); err != nil {
 		return err
 	}
 	s.rollbacks = append(s.rollbacks, rollbackEntry{action: Move, path: src, auxPath: dst})
 	return nil
 }
 
-func (s *Session) Update(path string, newData []byte) error {
+func (s *Session) Update(ctx context.Context, path string, newData []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := s.assertActive(); err != nil {
 		return err
 	}
-	if _, err := os.Stat(path); err != nil {
+	exists, err := s.fs.Exists(ctx, path)
+	if err != nil || !exists {
 		return err
 	}
-	backup, err := s.backup(path)
+	backup, err := s.backup(ctx, path)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, newData, 0o644); err != nil {
+	if err := s.fs.Upload(ctx, path, file.DefaultFileOsMode, bytes.NewReader(newData)); err != nil {
 		return err
 	}
 	s.rollbacks = append(s.rollbacks, rollbackEntry{action: Update, path: path, tempCopy: backup})
 	return nil
 }
 
-func (s *Session) Add(path string, data []byte) error {
+func (s *Session) Add(ctx context.Context, path string, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := s.assertActive(); err != nil {
 		return err
 	}
-	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("add: file %s already exists", path)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	parent, _ := url.Split(path, file.Scheme)
+	if err := s.fs.Create(ctx, parent, file.DefaultDirOsMode, true); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+
+	if err := s.fs.Upload(ctx, path, file.DefaultFileOsMode, bytes.NewReader(data)); err != nil {
 		return err
 	}
 	s.rollbacks = append(s.rollbacks, rollbackEntry{action: Add, path: path})
 	return nil
 }
 
-func (s *Session) Rollback() error {
+func (s *Session) Rollback(ctx ...context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Use provided context or create a new one
+	var c context.Context
+	if len(ctx) > 0 {
+		c = ctx[0]
+	} else {
+		c = context.Background()
+	}
 
 	for i := len(s.rollbacks) - 1; i >= 0; i-- {
 		r := s.rollbacks[i]
 		switch r.action {
 		case Delete, Update:
-			data, err := os.ReadFile(r.tempCopy)
+			data, err := s.fs.DownloadWithURL(c, r.tempCopy)
 			if err != nil {
 				return err
 			}
-			if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
+			parent, _ := url.Split(r.path, file.Scheme)
+			if err := s.fs.Create(c, parent, file.DefaultDirOsMode, true); err != nil {
 				return err
 			}
-			if err := os.WriteFile(r.path, data, 0o644); err != nil {
+			if err := s.fs.Upload(c, r.path, file.DefaultFileOsMode, bytes.NewReader(data)); err != nil {
 				return err
 			}
 		case Move:
-			if err := os.Rename(r.auxPath, r.path); err != nil {
+			if err := s.fs.Move(c, r.auxPath, r.path); err != nil {
 				return err
 			}
 		case Add:
-			if err := os.Remove(r.path); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("rollback add: %w", err)
+			if err := s.fs.Delete(c, r.path); err != nil {
+				// Check if it's a "not found" error, which is fine for rollback of an add
+				if !strings.Contains(err.Error(), "not found") {
+					return fmt.Errorf("rollback add: %w", err)
+				}
 			}
 		}
 	}
-	if err := os.RemoveAll(s.tempDir); err != nil {
+	if err := s.fs.Delete(c, s.tempDir); err != nil {
 		return fmt.Errorf("rollback cleanup: %w", err)
 	}
 	s.rollbacks = nil
 	return nil
 }
 
-func (s *Session) Commit() error {
+func (s *Session) Commit(ctx ...context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -281,9 +253,17 @@ func (s *Session) Commit() error {
 		return nil
 	}
 
+	// Use provided context or create a new one
+	var c context.Context
+	if len(ctx) > 0 {
+		c = ctx[0]
+	} else {
+		c = context.Background()
+	}
+
 	s.committed = true
 	s.rollbacks = nil
-	if err := os.RemoveAll(s.tempDir); err != nil {
+	if err := s.fs.Delete(c, s.tempDir); err != nil {
 		return fmt.Errorf("commit cleanup: %w", err)
 	}
 	return nil
@@ -293,7 +273,25 @@ func (s *Session) Commit() error {
 // Patch application (F‑03)
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (s *Session) ApplyPatch(patchText string) error {
+func (s *Session) ApplyPatch(ctx context.Context, patchText string, directory ...string) error {
+	// Get directory parameter or default to empty string
+	dir := ""
+	if len(directory) > 0 {
+		dir = directory[0]
+	}
+
+	patchText = strings.TrimSpace(patchText)
+	// Check if the patch is in the new format
+	if strings.HasPrefix(patchText, "*** Begin Patch") {
+		// Use the new parser
+		hunks, err := Parse(patchText)
+		if err != nil {
+			return fmt.Errorf("parse patch: %w", err)
+		}
+		return s.applyParsedHunks(ctx, hunks, dir)
+	}
+
+	// Original format handling
 	mfd, err := sgdiff.ParseMultiFileDiff([]byte(patchText))
 	if err != nil {
 		return fmt.Errorf("parse patch: %w", err)
@@ -302,25 +300,31 @@ func (s *Session) ApplyPatch(patchText string) error {
 		orig := strings.TrimPrefix(fd.OrigName, "a/")
 		newer := strings.TrimPrefix(fd.NewName, "b/")
 
+		// Resolve paths based on directory parameter
+		orig = resolvePath(orig, dir)
+		if newer != "/dev/null" {
+			newer = resolvePath(newer, dir)
+		}
+
 		switch {
 		case fd.NewName != "/dev/null" && fd.OrigName == "/dev/null":
 			var buf bytes.Buffer
 			if err := applyHunks(nil, fd.Hunks, &buf); err != nil {
 				return err
 			}
-			if err := s.Add(newer, buf.Bytes()); err != nil {
+			if err := s.Add(ctx, newer, buf.Bytes()); err != nil {
 				return err
 			}
 		case fd.NewName == "/dev/null" && fd.OrigName != "/dev/null":
-			if err := s.Delete(orig); err != nil {
+			if err := s.Delete(ctx, orig); err != nil {
 				return err
 			}
 		case orig != newer && len(fd.Hunks) == 0:
-			if err := s.Move(orig, newer); err != nil {
+			if err := s.Move(ctx, orig, newer); err != nil {
 				return err
 			}
 		default:
-			oldData, err := os.ReadFile(orig)
+			oldData, err := s.fs.DownloadWithURL(ctx, orig)
 			if err != nil {
 				return err
 			}
@@ -330,13 +334,101 @@ func (s *Session) ApplyPatch(patchText string) error {
 			}
 			target := orig
 			if orig != newer {
-				if err := s.Move(orig, newer); err != nil {
+				if err := s.Move(ctx, orig, newer); err != nil {
 					return err
 				}
 				target = newer
 			}
-			if err := s.Update(target, buf.Bytes()); err != nil {
+			if err := s.Update(ctx, target, buf.Bytes()); err != nil {
 				return err
+			}
+		}
+	}
+	return nil
+}
+
+// resolvePath resolves a file path based on a directory parameter.
+// If the path is absolute and directory is provided, the path is treated as relative to the directory.
+// If the path is absolute and directory is not provided, the path is returned as is.
+// If the path is relative and directory is provided, the path is resolved relative to the directory.
+// If the path is relative and directory is not provided, the path is returned as is (relative to current working directory).
+func resolvePath(path, directory string) string {
+	path = strings.TrimSpace(path)
+	directory = strings.TrimSpace(directory)
+
+	// If directory is provided, treat all paths as relative to it
+	if directory != "" {
+		if filepath.IsAbs(path) {
+			// For absolute paths, extract the file name and join with directory
+			path = filepath.Join(directory, filepath.Base(path))
+		} else {
+			// For relative paths, join with directory
+			path = filepath.Join(directory, path)
+		}
+		return path
+	}
+
+	// If no directory is provided, return the path as is
+	return path
+}
+
+// applyParsedHunks applies the hunks parsed by the new parser
+func (s *Session) applyParsedHunks(ctx context.Context, hunks []Hunk, directory string) error {
+	for _, hunk := range hunks {
+		switch h := hunk.(type) {
+		case AddFile:
+			// Resolve path based on directory parameter
+			path := resolvePath(h.Path, directory)
+			if err := s.Add(ctx, path, []byte(h.Contents)); err != nil {
+				return err
+			}
+
+		case DeleteFile:
+			// Resolve path based on directory parameter
+			path := resolvePath(h.Path, directory)
+			if err := s.Delete(ctx, path); err != nil {
+				return err
+			}
+
+		case UpdateFile:
+			// Resolve path based on directory parameter
+			path := resolvePath(h.Path, directory)
+
+			// Handle move if specified
+			if h.MovePath != "" {
+				newPath := resolvePath(h.MovePath, directory)
+
+				// If there are no chunks, just move the file
+				if len(h.Chunks) == 0 {
+					if err := s.Move(ctx, path, newPath); err != nil {
+						return err
+					}
+					continue
+				}
+
+				// Otherwise, we'll move and then update
+				if err := s.Move(ctx, path, newPath); err != nil {
+					return err
+				}
+				path = newPath
+			}
+
+			// If there are chunks, apply them
+			if len(h.Chunks) > 0 {
+				// Read the original file
+				oldData, err := s.fs.DownloadWithURL(ctx, path)
+				if err != nil {
+					return err
+				}
+
+				oldLines := s.applyUpdate(oldData, (UpdateFile)(h))
+
+				// Join the lines and update the file
+				newContent := []byte(strings.Join(oldLines, "\n") + "\n")
+
+				if err := s.Update(ctx, path, newContent); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -360,7 +452,10 @@ func applyHunks(oldData []byte, hunks []*sgdiff.Hunk, w io.Writer) error {
 		if (a == "" && b == "\n") || (a == "\n" && b == "") {
 			return true
 		}
-		return false
+		// Make comparison space-insensitive by removing all whitespace
+		aNoSpace := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(a, " ", ""), "\t", ""), "\r", "")
+		bNoSpace := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(b, " ", ""), "\t", ""), "\r", "")
+		return aNoSpace == bNoSpace
 	}
 
 	for _, h := range hunks {

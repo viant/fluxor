@@ -2,6 +2,7 @@ package patch
 
 import (
 	"context"
+	_ "embed"
 	"reflect"
 	"strings"
 	"sync"
@@ -11,6 +12,9 @@ import (
 
 // Name of the system/patch action service.
 const Name = "system/patch"
+
+//go:embed apply_spec.md
+var applySpec string
 
 // Service exposes filesystem patching capabilities as a Fluxor action service.
 // It is stateless – every method call operates with its own ephemeral Session.
@@ -30,7 +34,7 @@ func (s *Service) Methods() types.Signatures {
 	return []types.Signature{
 		{
 			Name:        "apply",
-			Description: "Applies a standard unified-diff patch (---/+++ headers, @@ hunks) to the local filesystem within the current session (auto-created on first use).For new files, create a patch with '--- /dev/null\\n+++ b/path/to/file.go\\n@@ -0,0 +1,N @@\\n+package main\\n...' where each line from the original is prefixed with '+' and N is the number of lines.",
+			Description: "Applies custom patch " + applySpec,
 			Input:       reflect.TypeOf(&ApplyInput{}),
 			Output:      reflect.TypeOf(&ApplyOutput{}),
 		},
@@ -77,25 +81,18 @@ func (s *Service) Method(name string) (types.Executable, error) {
 
 // ApplyInput is the payload for Service.apply
 type ApplyInput struct {
-	// Patch must be in the *standard* unified-diff format as produced by
-	// tools such as `git diff` or `diff -u`.
-	// A valid payload therefore starts with file header lines, for example:
-	//
-	//     --- a/path/to/file.txt
-	//     +++ b/path/to/file.txt
-	//     @@ -10,2 +10,3 @@
-	//     -old line
-	//     +new line
-	//
-	// and continues with the usual @@ hunk blocks.  Multi-file patches are
-	// accepted as well.  The service applies the patch relative to the
-	// current working directory of the Fluxor runtime.
-	Patch string `json:"patch" description:"Unified-diff text (---/+++ file headers with @@ hunk markers) to apply"`
+	// The service applies the patch relative to the current working directory of the Fluxor runtime.
+	Patch string `json:"patch" description:"Patch text to apply (either unified-diff format or simplified patch format)"`
+	// Directory is the base directory for resolving relative paths in the patch.
+	// If not provided, paths are resolved relative to the current working directory.
+	Directory string `json:"directory" description:"Base directory for resolving relative paths in the patch"`
 }
 
 // ApplyOutput summarises the changes applied.
 type ApplyOutput struct {
-	Stats DiffStats `json:"stats,omitempty"`
+	Stats  DiffStats `json:"stats,omitempty"`
+	Status string    `json:"status,omitempty"`
+	Error  string    `json:"error,omitempty"`
 }
 
 // DiffInput is the payload for Service.diff
@@ -117,7 +114,7 @@ type EmptyOutput struct{}
 // method executors
 // -------------------------------------------------------------------------
 
-func (s *Service) apply(_ context.Context, in, out interface{}) error {
+func (s *Service) apply(ctx context.Context, in, out interface{}) error {
 	input, ok := in.(*ApplyInput)
 	if !ok {
 		return types.NewInvalidInputError(in)
@@ -126,7 +123,16 @@ func (s *Service) apply(_ context.Context, in, out interface{}) error {
 	if !ok {
 		return types.NewInvalidOutputError(out)
 	}
+	output.Status = "ok"
+	err := s.applyPatch(ctx, input, output)
+	if err != nil {
+		output.Error = err.Error()
+		output.Status = "error"
+	}
+	return nil
+}
 
+func (s *Service) applyPatch(ctx context.Context, input *ApplyInput, output *ApplyOutput) error {
 	s.mu.Lock()
 	if s.session == nil {
 		var err error
@@ -139,9 +145,9 @@ func (s *Service) apply(_ context.Context, in, out interface{}) error {
 	sess := s.session
 	s.mu.Unlock()
 
-	if err := sess.ApplyPatch(input.Patch); err != nil {
+	if err := sess.ApplyPatch(ctx, input.Patch, input.Directory); err != nil {
 		// rollback session and clear it
-		_ = sess.Rollback()
+		_ = sess.Rollback(ctx)
 		s.mu.Lock()
 		s.session = nil
 		s.mu.Unlock()
@@ -155,7 +161,7 @@ func (s *Service) apply(_ context.Context, in, out interface{}) error {
 }
 
 // commit finalises the active session and clears it.
-func (s *Service) commit(_ context.Context, in, out interface{}) error {
+func (s *Service) commit(ctx context.Context, in, out interface{}) error {
 	if _, ok := in.(*EmptyInput); !ok {
 		return types.NewInvalidInputError(in)
 	}
@@ -169,13 +175,13 @@ func (s *Service) commit(_ context.Context, in, out interface{}) error {
 	if s.session == nil {
 		return nil // nothing to commit
 	}
-	err := s.session.Commit()
+	err := s.session.Commit(ctx)
 	s.session = nil
 	return err
 }
 
 // rollback aborts the active session and clears it.
-func (s *Service) rollback(_ context.Context, in, out interface{}) error {
+func (s *Service) rollback(ctx context.Context, in, out interface{}) error {
 	if _, ok := in.(*EmptyInput); !ok {
 		return types.NewInvalidInputError(in)
 	}
@@ -189,12 +195,12 @@ func (s *Service) rollback(_ context.Context, in, out interface{}) error {
 	if s.session == nil {
 		return nil // nothing to rollback
 	}
-	err := s.session.Rollback()
+	err := s.session.Rollback(ctx)
 	s.session = nil
 	return err
 }
 
-func (s *Service) diff(_ context.Context, in, out interface{}) error {
+func (s *Service) diff(ctx context.Context, in, out interface{}) error {
 	input, ok := in.(*DiffInput)
 	if !ok {
 		return types.NewInvalidInputError(in)
@@ -204,11 +210,13 @@ func (s *Service) diff(_ context.Context, in, out interface{}) error {
 		return types.NewInvalidOutputError(out)
 	}
 
-	res, err := GenerateDiff([]byte(input.OldContent), []byte(input.NewContent), input.Path, input.ContextLines)
+	// Context is not used in GenerateDiff, but we're keeping it for consistency
+	res, stats, err := GenerateDiff([]byte(input.OldContent), []byte(input.NewContent), input.Path, input.ContextLines)
 	if err != nil {
 		return err
 	}
-	*output = DiffOutput(res)
+	output.Patch = res
+	output.Stats = stats
 	return nil
 }
 
@@ -217,16 +225,11 @@ func patchStats(p string) DiffStats {
 	stats := DiffStats{}
 	for _, l := range strings.Split(p, "\n") {
 		switch {
-		case strings.HasPrefix(l, "@@"):
-			stats.Hunks++
 		case strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++"):
-			stats.Insertions++
+			stats.Added++
 		case strings.HasPrefix(l, "-") && !strings.HasPrefix(l, "---"):
-			stats.Deletions++
+			stats.Removed++
 		}
-	}
-	if p != "" {
-		stats.FilesChanged = 1 // quick heuristic; multi-file patches are rare here
 	}
 	return stats
 }

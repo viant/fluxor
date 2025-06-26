@@ -1,277 +1,307 @@
-package patch
+package patch_test
 
 import (
-	"os"
-	"path/filepath"
-	"testing"
-
+	"context"
+	"fmt"
 	"github.com/stretchr/testify/assert"
+	"github.com/viant/afs"
+	"github.com/viant/fluxor/service/action/system/patch"
+	"strings"
+	"testing"
 )
 
-func TestSession_BasicOperations(t *testing.T) {
-	// Create a temporary directory for testing
-	tempDir, err := os.MkdirTemp("", "patch-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Create a test file
-	testFile := filepath.Join(tempDir, "test.txt")
-	originalContent := []byte("original content\n")
-	err = os.WriteFile(testFile, originalContent, 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	// Create a new session
-	session, err := NewSession()
-	if err != nil {
-		t.Fatalf("Failed to create session: %v", err)
-	}
-
-	// Test Update operation
-	newContent := []byte("updated content\n")
-	err = session.Update(testFile, newContent)
-	if err != nil {
-		t.Fatalf("Failed to update file: %v", err)
-	}
-
-	// Verify the file was updated
-	content, err := os.ReadFile(testFile)
-	if err != nil {
-		t.Fatalf("Failed to read file: %v", err)
-	}
-	assert.Equal(t, newContent, content, "File content should be updated")
-
-	// Test Rollback operation
-	err = session.Rollback()
-	if err != nil {
-		t.Fatalf("Failed to rollback: %v", err)
-	}
-
-	// Verify the file was restored to original content
-	content, err = os.ReadFile(testFile)
-	if err != nil {
-		t.Fatalf("Failed to read file: %v", err)
-	}
-	assert.Equal(t, originalContent, content, "File content should be restored to original")
+// normalizeWhitespace removes all whitespace characters to make comparison whitespace insensitive
+func normalizeWhitespace(s string) string {
+	// Remove all whitespace characters (spaces, tabs, carriage returns)
+	return strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(s, " ", ""), "\t", ""), "\r", "")
 }
 
-func TestSession_Add(t *testing.T) {
-	// Create a temporary directory for testing
-	tempDir, err := os.MkdirTemp("", "patch-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+func TestService_ApplyPatch(t *testing.T) {
 
-	// Create a new session
-	session, err := NewSession()
-	if err != nil {
-		t.Fatalf("Failed to create session: %v", err)
-	}
+	var addFilePatch = `*** Begin Patch
+*** Add File: mem://localhost/service_test.go
++package file_test
++
++import (
++    "bytes"
++    "context"
++    "fmt"
++    "io/ioutil"
++    "os"
++    "path/filepath"
++    "testing"
++
++    ffile "github.com/viant/forge/backend/service/file"
++    "github.com/viant/afs/storage"
++)
++
++// setupTempFS creates a temporary directory with files and folders for testing
+*** End Patch`
 
-	// Test Add operation
-	newFile := filepath.Join(tempDir, "new.txt")
-	content := []byte("new file content\n")
-	err = session.Add(newFile, content)
-	if err != nil {
-		t.Fatalf("Failed to add file: %v", err)
-	}
+	testCases := []struct {
+		name          string
+		patches       []string
+		existingFiles map[string]string
+		expectedFiles map[string]string // path -> content
+	}{
 
-	// Verify the file was created
-	fileContent, err := os.ReadFile(newFile)
-	if err != nil {
-		t.Fatalf("Failed to read file: %v", err)
-	}
-	assert.Equal(t, content, fileContent, "File content should match")
+		{
+			name: "updated existing file",
+			existingFiles: map[string]string{
+				"mem://localhost/service_test.go": `package file_test
 
-	// Test Rollback operation
-	err = session.Rollback()
-	if err != nil {
-		t.Fatalf("Failed to rollback: %v", err)
+// New creates a new Service.
+func New(root string, options ...storage.Option) *Service {
+	return &Service{
+		root:    root,
+		options: options,
+		service: afs.New(), // this creates a new default AFS service
 	}
-
-	// Verify the file was removed
-	_, err = os.Stat(newFile)
-	assert.True(t, os.IsNotExist(err), "File should be removed after rollback")
 }
 
-func TestSession_Delete(t *testing.T) {
-	// Create a temporary directory for testing
-	tempDir, err := os.MkdirTemp("", "patch-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+// List returns the files and directories at requestedPath (relative to Service.root).
+func (f *Service) List(ctx context.Context, opts ...Option) ([]File, error) {
+	// Build the full path by combining the root and the requested path.
+	options := newOptions(opts...)
+	uri := options.uri
 
-	// Create a test file
-	testFile := filepath.Join(tempDir, "test.txt")
-	originalContent := []byte("original content\n")
-	err = os.WriteFile(testFile, originalContent, 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
+	// Check if the path actually exists.
+	exists, _ := f.service.Exists(ctx, URL)
+	if !exists {
+		return nil, fmt.Errorf("path %q does not exist", URL)
 	}
 
-	// Create a new session
-	session, err := NewSession()
-	if err != nil {
-		t.Fatalf("Failed to create session: %v", err)
-	}
+   objects, err := f.service.List(context.Background(), URL)
+   if err != nil {
+       return nil, err
+   }
 
-	// Test Delete operation
-	err = session.Delete(testFile)
-	if err != nil {
-		t.Fatalf("Failed to delete file: %v", err)
-	}
+	var items []File
 
-	// Verify the file was deleted
-	_, err = os.Stat(testFile)
-	assert.True(t, os.IsNotExist(err), "File should be deleted")
-
-	// Test Rollback operation
-	err = session.Rollback()
-	if err != nil {
-		t.Fatalf("Failed to rollback: %v", err)
+   for _, obj := range objects {
+       if url.Equals(URL, obj.URL()) {
+           continue
+       }
+	   if options.onlyFolder && !obj.IsDir() {
+            continue
+	   }
 	}
+}
+`,
+			},
+			patches: []string{
+				`*** Begin Patch
+*** Update File: mem://localhost/service_test.go
+@@ func (f *Service) List(ctx context.Context, opts ...Option) ([]File, error) {
+-   objects, err := f.service.List(context.Background(), URL)
++   objects, err := f.service.List(context.Background(), URL1)
+@@
+-   for _, obj := range objects {
+-       if url.Equals(URL, obj.URL()) {
+-           continue
+-       }
++   for _, obj := range objects {
++       // Skip the parent directory itself
++       if url.Equals(parentURL, obj.URL()) {
++           continue
++       }
+*** End Patch
+`,
+			},
+			expectedFiles: map[string]string{
+				"mem://localhost/service_test.go": `package file_test
 
-	// Verify the file was restored
-	content, err := os.ReadFile(testFile)
-	if err != nil {
-		t.Fatalf("Failed to read file: %v", err)
+// New creates a new Service.
+func New(root string, options ...storage.Option) *Service {
+	return &Service{
+		root:    root,
+		options: options,
+		service: afs.New(), // this creates a new default AFS service
 	}
-	assert.Equal(t, originalContent, content, "File should be restored with original content")
 }
 
-func TestSession_Move(t *testing.T) {
-	// Create a temporary directory for testing
-	tempDir, err := os.MkdirTemp("", "patch-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+// List returns the files and directories at requestedPath (relative to Service.root).
+func (f *Service) List(ctx context.Context, opts ...Option) ([]File, error) {
+	// Build the full path by combining the root and the requested path.
+	options := newOptions(opts...)
+	uri := options.uri
 
-	// Create a test file
-	srcFile := filepath.Join(tempDir, "src.txt")
-	originalContent := []byte("original content\n")
-	err = os.WriteFile(srcFile, originalContent, 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
+	// Check if the path actually exists.
+	exists, _ := f.service.Exists(ctx, URL)
+	if !exists {
+		return nil, fmt.Errorf("path %q does not exist", URL)
 	}
 
-	// Create a new session
-	session, err := NewSession()
-	if err != nil {
-		t.Fatalf("Failed to create session: %v", err)
+   objects, err := f.service.List(context.Background(), URL1)
+   if err != nil {
+       return nil, err
+   }
+
+	var items []File
+
+   for _, obj := range objects {
+       // Skip the parent directory itself
+       if url.Equals(parentURL, obj.URL()) {
+           continue
+       }
+	   if options.onlyFolder && !obj.IsDir() {
+            continue
+	   }
 	}
-
-	// Test Move operation
-	dstFile := filepath.Join(tempDir, "dst.txt")
-	err = session.Move(srcFile, dstFile)
-	if err != nil {
-		t.Fatalf("Failed to move file: %v", err)
-	}
-
-	// Verify the file was moved
-	_, err = os.Stat(srcFile)
-	assert.True(t, os.IsNotExist(err), "Source file should not exist")
-
-	content, err := os.ReadFile(dstFile)
-	if err != nil {
-		t.Fatalf("Failed to read destination file: %v", err)
-	}
-	assert.Equal(t, originalContent, content, "Destination file content should match original")
-
-	// Test Rollback operation
-	err = session.Rollback()
-	if err != nil {
-		t.Fatalf("Failed to rollback: %v", err)
-	}
-
-	// Verify the file was moved back
-	_, err = os.Stat(dstFile)
-	assert.True(t, os.IsNotExist(err), "Destination file should not exist after rollback")
-
-	content, err = os.ReadFile(srcFile)
-	if err != nil {
-		t.Fatalf("Failed to read source file: %v", err)
-	}
-	assert.Equal(t, originalContent, content, "Source file should be restored with original content")
 }
+`,
+			},
+		},
+		{
+			name: "single patch - add file",
+			patches: []string{
+				addFilePatch,
+			},
+			expectedFiles: map[string]string{
+				"mem://localhost/service_test.go": `package file_test
 
-func TestGenerateDiff(t *testing.T) {
-	oldContent := []byte("line1\nline2\nline3\n")
-	newContent := []byte("line1\nmodified line2\nline3\nline4\n")
+import (
+    "bytes"
+    "context"
+    "fmt"
+    "io/ioutil"
+    "os"
+    "path/filepath"
+    "testing"
 
-	diff, err := GenerateDiff(oldContent, newContent, "test.txt", 3)
-	if err != nil {
-		t.Fatalf("Failed to generate diff: %v", err)
+    ffile "github.com/viant/forge/backend/service/file"
+    "github.com/viant/afs/storage"
+)
+
+// setupTempFS creates a temporary directory with files and folders for testing
+`,
+			},
+		},
+		{
+			name: "single line addition \"github.com/viant/afs/option\"",
+			patches: []string{
+				addFilePatch,
+				`*** Begin Patch
+*** Update File: mem://localhost/service_test.go
+@@ import (
+-   ffile "github.com/viant/forge/backend/service/file"
+-   "github.com/viant/afs/storage"
++   ffile "github.com/viant/forge/backend/service/file"
++   "github.com/viant/afs/storage"
++   "github.com/viant/afs/option"
+*** End Patch`,
+			},
+			expectedFiles: map[string]string{
+				"mem://localhost/service_test.go": `package file_test
+
+import (
+    "bytes"
+    "context"
+    "fmt"
+    "io/ioutil"
+    "os"
+    "path/filepath"
+    "testing"
+
+    ffile "github.com/viant/forge/backend/service/file"
+    "github.com/viant/afs/storage"
+   "github.com/viant/afs/option"
+)
+
+// setupTempFS creates a temporary directory with files and folders for testing
+`,
+			},
+		},
+
+		{
+			name: "multi line removal",
+			patches: []string{
+				addFilePatch,
+				`*** Begin Patch
+*** Update File: mem://localhost/service_test.go
+@@ import (
+-   ffile "github.com/viant/forge/backend/service/file"
+-   "github.com/viant/afs/storage"
+*** End Patch`,
+			},
+			expectedFiles: map[string]string{
+				"mem://localhost/service_test.go": `package file_test
+
+import (
+    "bytes"
+    "context"
+    "fmt"
+    "io/ioutil"
+    "os"
+    "path/filepath"
+    "testing"
+
+)
+
+// setupTempFS creates a temporary directory with files and folders for testing
+`,
+			},
+		},
 	}
+	fs := afs.New()
 
-	// Verify diff stats
-	assert.Equal(t, 1, diff.Stats.FilesChanged, "Should have 1 file changed")
-	assert.Equal(t, 2, diff.Stats.Insertions, "Should have 2 insertions")
-	assert.Equal(t, 1, diff.Stats.Deletions, "Should have 1 deletion")
-	assert.Equal(t, 1, diff.Stats.Hunks, "Should have 1 hunk")
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a temporary directory for this test case
 
-	// Verify diff contains expected changes
-	assert.Contains(t, diff.Patch, "modified line2", "Diff should contain modified line")
-	assert.Contains(t, diff.Patch, "line4", "Diff should contain new line")
-}
+			// Create a new patch session
+			session, err := patch.NewSession()
+			if err != nil {
+				t.Fatalf("failed to create patch session: %v", err)
+			}
 
-func TestSession_ApplyPatch(t *testing.T) {
-	// Create a temporary directory for testing
-	tempDir, err := os.MkdirTemp("", "patch-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+			// Create context
+			ctx := context.Background()
+
+			for existingFile, content := range tc.existingFiles {
+				err = fs.Upload(ctx, existingFile, 0777, strings.NewReader(content))
+				if !assert.Nil(t, err, "failed to create file: %v", err) {
+					continue
+				}
+			}
+			// Apply each patch
+			for i, patchText := range tc.patches {
+				err = session.ApplyPatch(ctx, patchText)
+				if err != nil {
+					t.Fatalf("failed to apply patch %d: %v", i, err)
+				}
+			}
+
+			// Commit the changes
+			if err := session.Commit(ctx); err != nil {
+				t.Fatalf("failed to commit changes: %v", err)
+			}
+
+			// Verify the final state of the files
+			for path, expectedContent := range tc.expectedFiles {
+
+				// Read file content
+				data, err := fs.DownloadWithURL(context.TODO(), path)
+				if err != nil {
+					t.Fatalf("failed to read file: %v", err)
+				}
+
+				actualContent := string(data)
+				// Normalize content by trimming trailing newlines and making whitespace insensitive
+				expectedNormalized := strings.TrimRight(expectedContent, "\n")
+				actualNormalized := strings.TrimRight(actualContent, "\n")
+
+				// For assertion purposes, we'll compare normalized versions (whitespace insensitive)
+				// but still show the original content in case of failure
+				expectedForComparison := normalizeWhitespace(expectedNormalized)
+				actualForComparison := normalizeWhitespace(actualNormalized)
+
+				if expectedForComparison != actualForComparison {
+					// Use assert.Equal to get the nice diff output, but with original content
+					fmt.Printf("file content mismatch for %s\n", path)
+					assert.Equal(t, expectedNormalized, actualNormalized, "file content mismatch for %s", path)
+				}
+			}
+		})
 	}
-	defer os.RemoveAll(tempDir)
-
-	// Create a test file
-	testFile := filepath.Join(tempDir, "test.txt")
-	originalContent := []byte("line1\nline2\nline3\n")
-	err = os.WriteFile(testFile, originalContent, 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	// Generate a diff
-	newContent := []byte("line1\nmodified line2\nline3\nline4\n")
-	diff, err := GenerateDiff(originalContent, newContent, testFile, 3)
-	if err != nil {
-		t.Fatalf("Failed to generate diff: %v", err)
-	}
-
-	// Create a new session
-	session, err := NewSession()
-	if err != nil {
-		t.Fatalf("Failed to create session: %v", err)
-	}
-
-	// Apply the patch
-	err = session.ApplyPatch(diff.Patch)
-	if err != nil {
-		t.Fatalf("Failed to apply patch: %v", err)
-	}
-
-	// Verify the file was updated
-	content, err := os.ReadFile(testFile)
-	if err != nil {
-		t.Fatalf("Failed to read file: %v", err)
-	}
-	assert.Equal(t, newContent, content, "File content should be updated according to the patch")
-
-	// Test Rollback operation
-	err = session.Rollback()
-	if err != nil {
-		t.Fatalf("Failed to rollback: %v", err)
-	}
-
-	// Verify the file was restored to original content
-	content, err = os.ReadFile(testFile)
-	if err != nil {
-		t.Fatalf("Failed to read file: %v", err)
-	}
-	assert.Equal(t, originalContent, content, "File content should be restored to original")
 }

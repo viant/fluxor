@@ -19,7 +19,7 @@ func (i *WaitInput) Init(ctx context.Context) {
 		i.PoolFrequencyInMs = 200
 	}
 	if i.TimeoutInMs == 0 {
-		i.TimeoutInMs = 300000 //5 min
+		i.TimeoutInMs = 600000 //10 min
 	}
 }
 
