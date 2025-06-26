@@ -202,6 +202,11 @@ func (s *Session) Rollback(ctx ...context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// If already committed, nothing to rollback
+	if s.committed {
+		return nil
+	}
+
 	// Use provided context or create a new one
 	var c context.Context
 	if len(ctx) > 0 {
@@ -210,38 +215,74 @@ func (s *Session) Rollback(ctx ...context.Context) error {
 		c = context.Background()
 	}
 
+	var rollbackErrors []error
+
+	// Process rollbacks in reverse order (newest to oldest)
 	for i := len(s.rollbacks) - 1; i >= 0; i-- {
 		r := s.rollbacks[i]
+
 		switch r.action {
 		case Delete, Update:
+			// Restore file from backup
 			data, err := s.fs.DownloadWithURL(c, r.tempCopy)
 			if err != nil {
-				return err
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to download backup for %s: %w", r.path, err))
+				continue
 			}
 			parent, _ := url.Split(r.path, file.Scheme)
 			if err := s.fs.Create(c, parent, file.DefaultDirOsMode, true); err != nil {
-				return err
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to create parent directory for %s: %w", r.path, err))
+				continue
 			}
 			if err := s.fs.Upload(c, r.path, file.DefaultFileOsMode, bytes.NewReader(data)); err != nil {
-				return err
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to restore %s: %w", r.path, err))
+				continue
 			}
+
 		case Move:
-			if err := s.fs.Move(c, r.auxPath, r.path); err != nil {
-				return err
+			// Check if destination exists before moving back
+			exists, _ := s.fs.Exists(c, r.auxPath)
+			if !exists {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("cannot rollback move: source %s no longer exists", r.auxPath))
+				continue
 			}
+
+			// Move file back to original location
+			if err := s.fs.Move(c, r.auxPath, r.path); err != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to move %s back to %s: %w", r.auxPath, r.path, err))
+				continue
+			}
+
 		case Add:
+			// Delete added file
 			if err := s.fs.Delete(c, r.path); err != nil {
 				// Check if it's a "not found" error, which is fine for rollback of an add
 				if !strings.Contains(err.Error(), "not found") {
-					return fmt.Errorf("rollback add: %w", err)
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to delete added file %s: %w", r.path, err))
+					continue
 				}
 			}
 		}
 	}
+
+	// Clean up temporary directory
 	if err := s.fs.Delete(c, s.tempDir); err != nil {
-		return fmt.Errorf("rollback cleanup: %w", err)
+		rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback cleanup: %w", err))
 	}
+
+	// Clear rollbacks regardless of errors to prevent re-attempting
 	s.rollbacks = nil
+
+	// If there were any errors, return a combined error message
+	if len(rollbackErrors) > 0 {
+		var errMsg strings.Builder
+		errMsg.WriteString("rollback encountered errors:\n")
+		for i, err := range rollbackErrors {
+			errMsg.WriteString(fmt.Sprintf("  %d. %s\n", i+1, err.Error()))
+		}
+		return errors.New(errMsg.String())
+	}
+
 	return nil
 }
 
