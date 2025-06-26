@@ -19,6 +19,54 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// Workflow hot-swap helpers
+// ---------------------------------------------------------------------------
+
+// RefreshWorkflow discards any cached copy of the workflow definition located
+// at the given URL/location. The next LoadWorkflow call will reload the file
+// via the configured meta-service (i.e. one extra disk/cloud round-trip).
+func (r *Runtime) RefreshWorkflow(location string) error {
+	if r == nil || r.workflowDAO == nil {
+		return fmt.Errorf("runtime not fully initialised – workflowDAO missing")
+	}
+	r.workflowDAO.Refresh(location)
+	return nil
+}
+
+// UpsertDefinition parses the supplied YAML bytes and stores the resulting
+// workflow definition in the in-memory cache under the specified location.
+// When data is nil the call falls back to RefreshWorkflow, causing a lazy
+// reload on next use.
+func (r *Runtime) UpsertDefinition(location string, data []byte) error {
+	if r == nil || r.workflowDAO == nil {
+		return fmt.Errorf("runtime not fully initialised – workflowDAO missing")
+	}
+
+	// If no data provided, fall back to lazy refresh (strategy #1).
+	if data == nil {
+		return r.RefreshWorkflow(location)
+	}
+
+	// Parse the YAML using the DAO's decoding logic.
+	wf, err := r.workflowDAO.DecodeYAML(data)
+	if err != nil {
+		return fmt.Errorf("failed to decode workflow YAML: %w", err)
+	}
+
+	// Ensure the Source URL mirrors the provided location so that any
+	// downstream code relying on it sees the expected value.
+	if wf.Source == nil {
+		wf.Source = &model.Source{URL: location}
+	} else {
+		wf.Source.URL = location
+	}
+
+	// Store in cache for immediate availability.
+	r.workflowDAO.Upsert(location, wf)
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // Convenience helpers
 // ---------------------------------------------------------------------------
 

@@ -13,16 +13,85 @@ import (
 	"gopkg.in/yaml.v3"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type Service struct {
 	metaService      *meta.Service
 	rootTaskNodeName string
+	cache            map[string]*model.Workflow
+	mu               sync.RWMutex
 }
 
 // RootTaskNodeName returns the root task node name
 func (s *Service) RootTaskNodeName() string {
 	return s.rootTaskNodeName
+}
+
+// canonicalizeLocation ensures the provided location has a supported extension.
+// If no extension is specified, ".yaml" is appended to be consistent with the
+// Load behaviour and cache keys.
+func canonicalizeLocation(location string) string {
+	if ext := filepath.Ext(location); ext == "" {
+		return location + ".yaml"
+	}
+	return location
+}
+
+// getFromCache returns a cached workflow (if present) for the given location.
+func (s *Service) getFromCache(location string) (*model.Workflow, bool) {
+	if s == nil {
+		return nil, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	wf, ok := s.cache[location]
+	return wf, ok
+}
+
+// storeToCache stores a workflow in the cache under the provided location.
+func (s *Service) storeToCache(location string, wf *model.Workflow) {
+	if s == nil || wf == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.cache == nil {
+		s.cache = make(map[string]*model.Workflow)
+	}
+	s.cache[location] = wf
+	s.mu.Unlock()
+}
+
+// refresh removes the cached workflow under the provided location, if any.
+func (s *Service) refresh(location string) {
+	s.mu.Lock()
+	if s.cache != nil {
+		delete(s.cache, location)
+	}
+	s.mu.Unlock()
+}
+
+// Refresh discards any cached copy of the workflow definition identified by
+// the provided location. The next Load call will reload the file via the
+// meta-service.
+func (s *Service) Refresh(location string) {
+	location = canonicalizeLocation(location)
+	s.refresh(location)
+}
+
+// Upsert stores the supplied workflow definition in the cache under the given
+// location, replacing any existing entry.
+func (s *Service) Upsert(location string, wf *model.Workflow) {
+	location = canonicalizeLocation(location)
+	// Ensure the Source URL is aligned with the provided location.
+	if wf != nil {
+		if wf.Source == nil {
+			wf.Source = &model.Source{URL: location}
+		} else {
+			wf.Source.URL = location
+		}
+	}
+	s.storeToCache(location, wf)
 }
 
 // DecodeYAML decodes a workflow from YAML
@@ -36,16 +105,29 @@ func (s *Service) DecodeYAML(encoded []byte) (*model.Workflow, error) {
 
 // Load loads a workflow from YAML at the specified Location
 func (s *Service) Load(ctx context.Context, URL string) (*model.Workflow, error) {
-	ext := filepath.Ext(URL)
-	if ext == "" {
-		URL += ".yaml"
+	// Normalise location first so that caching keys are consistent.
+	URL = canonicalizeLocation(URL)
+
+	// Return cached copy if available.
+	if wf, ok := s.getFromCache(URL); ok {
+		return wf, nil
 	}
+
+	// Not cached – read from underlying storage.
 	var node yaml.Node
 	if err := s.metaService.Load(ctx, URL, &node); err != nil {
 		return nil, fmt.Errorf("failed to load workflow from %s: %w", URL, err)
 	}
 
-	return s.ParseWorkflow(URL, &node)
+	wf, err := s.ParseWorkflow(URL, &node)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store parsed workflow in cache for future use.
+	s.storeToCache(URL, wf)
+
+	return wf, nil
 }
 
 func (s *Service) ParseWorkflow(URL string, node *yaml.Node) (*model.Workflow, error) {
