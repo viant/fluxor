@@ -144,11 +144,17 @@ func (l *Service) getImportPathAndKey(ctx context.Context, value string) (path s
 func (l *Service) processNode(ctx context.Context, node *yaml.Node, baseDir string) error {
 	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" {
 
+		if isEnvExpr(node.Value) {
+			node.Value = expandEnvExpr(node.Value)
+
+		}
+
 		if isPathDirective(node.Value) {
 			node.Value = node.Value[len("$path(") : len(node.Value)-1]
 			node.Value = url.Join(baseDir, node.Value)
 			return nil
 		}
+
 		if isImportDirective(node.Value) {
 			importPath, key, err := l.getImportPathAndKey(ctx, node.Value)
 			if err != nil {
@@ -216,6 +222,11 @@ func isImportDirective(value string) bool {
 // isImportDirective checks if a string is an $import directive.
 func isPathDirective(value string) bool {
 	return strings.HasPrefix(strings.TrimSpace(value), "$path")
+}
+
+// isImportDirective checks if a string is an $import directive.
+func isEnvExpr(value string) bool {
+	return strings.Contains(value, "${env.")
 }
 
 // getNodeByKey navigates through the YAML node to find the node under the specified key path.
