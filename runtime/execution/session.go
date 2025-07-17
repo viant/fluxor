@@ -15,11 +15,11 @@ import (
 type Session struct {
 	ID        string
 	State     map[string]interface{}
+	Context   map[string]interface{}
 	types     *extension.Types
 	imports   model.Imports
 	converter *conv.Converter
 	mu        sync.RWMutex
-
 	listeners []StateListener // invoked on Set
 	whenL     []WhenListener  // invoked on when-condition evaluation
 }
@@ -271,8 +271,9 @@ func (s *Session) TypedValue(aType reflect.Type, value interface{}) (interface{}
 // NewSession creates a new session
 func NewSession(id string, opt ...Option) *Session {
 	ret := &Session{
-		ID:    id,
-		State: make(map[string]interface{}),
+		ID:      id,
+		State:   make(map[string]interface{}),
+		Context: make(map[string]interface{}),
 	}
 
 	for _, o := range opt {

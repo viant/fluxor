@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/viant/fluxor/model"
 	"github.com/viant/fluxor/model/graph"
+	"github.com/viant/fluxor/model/types"
 	"github.com/viant/fluxor/policy"
 	"github.com/viant/fluxor/progress"
 	execution "github.com/viant/fluxor/runtime/execution"
@@ -206,6 +207,7 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 	} else {
 		ctx, tracker = progress.WithNewTracker(ctx, "", workflow.Name, nil)
 	}
+
 	// start tracing span for process start
 	ctx, span := tracing.StartSpan(ctx, fmt.Sprintf("processor.StartProcess %s", workflow.Name), "INTERNAL")
 	defer tracing.EndSpan(span, err)
@@ -255,8 +257,13 @@ func (s *Service) StartProcess(ctx context.Context, workflow *model.Workflow, in
 }
 
 func (s *Service) NewProcess(ctx context.Context, processID string, workflow *model.Workflow, init map[string]interface{}) (*execution.Process, error) {
+
+	var execContext map[string]any
+	if execCtxValue := ctx.Value(types.ExecutionContextKey); execCtxValue != nil {
+		execContext, _ = execCtxValue.(map[string]any)
+	}
 	// Create the process
-	aProcess := execution.NewProcess(processID, workflow.Name, workflow, init)
+	aProcess := execution.NewProcess(processID, workflow.Name, workflow, init, execContext)
 	aProcess.Ctx = ctx
 	aProcess.Session.RegisterListeners(s.sessListeners...)
 	aProcess.Session.RegisterWhenListeners(s.whenListeners...)
@@ -433,7 +440,9 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 	}
 	execCtx := context.WithValue(baseCtx, execution.ProcessKey, process)
 	execCtx = context.WithValue(execCtx, execution.ExecutionKey, anExecution)
-
+	for k, v := range process.Session.Context {
+		execCtx = context.WithValue(execCtx, k, v)
+	}
 	// Execute the task action.  Special-case ErrWaitForApproval which is a
 	// transitional state rather than a real failure.
 

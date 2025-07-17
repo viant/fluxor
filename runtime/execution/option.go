@@ -47,3 +47,11 @@ func WithStateListeners(listeners ...StateListener) Option {
 		session.listeners = append(session.listeners, listeners...)
 	}
 }
+
+func WithExecutionContext(context map[string]any) Option {
+	return func(session *Session) {
+		for k, v := range context {
+			session.Context[k] = v
+		}
+	}
+}

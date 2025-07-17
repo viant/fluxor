@@ -73,7 +73,6 @@ func (s *Service) run(ctx context.Context, in, out interface{}) (err error) {
 	ctx = tracing.WithTrace(ctx, trace)
 	ctx, rootSpan := tracing.StartSpan(ctx, fmt.Sprintf("workflow:run %s", input.Location), "SERVER")
 	defer tracing.EndSpan(rootSpan, err)
-
 	input.Init(ctx)
 
 	if err := input.Validate(ctx); err != nil {
@@ -83,7 +82,6 @@ func (s *Service) run(ctx context.Context, in, out interface{}) (err error) {
 	if err := s.ensureWorkflow(ctx, input); err != nil {
 		return err
 	}
-
 	process, err := s.processor.StartProcess(ctx, input.Workflow, input.Context, input.Tasks...)
 	if err != nil {
 		return err

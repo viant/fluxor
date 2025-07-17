@@ -167,7 +167,7 @@ func (p *Process) AllTasks() map[string]*graph.Task {
 
 // NewProcess creates a new process
 
-func NewProcess(id string, name string, workflow *model.Workflow, initialState map[string]interface{}) *Process {
+func NewProcess(id string, name string, workflow *model.Workflow, initialState map[string]interface{}, execContext map[string]interface{}) *Process {
 	ctx, cancel := context.WithCancel(context.Background())
 	now := time.Now()
 	if initialState == nil {
@@ -180,7 +180,7 @@ func NewProcess(id string, name string, workflow *model.Workflow, initialState m
 		Workflow:         workflow,
 		CreatedAt:        now,
 		UpdatedAt:        now,
-		Session:          NewSession(id, WithState(initialState)),
+		Session:          NewSession(id, WithState(initialState), WithExecutionContext(execContext)),
 		Ctx:              ctx,
 		cancel:           cancel,
 		ActiveTaskCount:  0,
