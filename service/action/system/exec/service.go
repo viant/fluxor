@@ -64,7 +64,7 @@ func (s *Service) Execute(ctx context.Context, input *Input, output *Output) err
 
 	timeoutDuration := time.Duration(input.TimeoutMs) * time.Millisecond
 	if timeoutDuration == 0 {
-		timeoutDuration = 1 * time.Minute
+		timeoutDuration = 3 * time.Minute
 	}
 	var errorCodeCmd string
 	var lastErrorCode int
