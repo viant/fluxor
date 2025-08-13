@@ -28,6 +28,26 @@ type (
 		AutoPause  *bool            `json:"autoPause,omitempty" yaml:"autoPause,omitempty"`
 		Retry      *Retry           `json:"retry,omitempty" yaml:"retry,omitempty"`
 		ScheduleIn string           `json:"scheduleIn,omitempty" yaml:"scheduleIn,omitempty"`
+		// Async fan-out/fan-in extensions
+		Emit  *EmitSpec  `json:"emit,omitempty" yaml:"emit,omitempty"`
+		Await *AwaitSpec `json:"await,omitempty" yaml:"await,omitempty"`
+	}
+
+	// EmitSpec describes a dynamic fan-out of child executions that should be
+	// emitted by the task at run-time.
+	EmitSpec struct {
+		ForEach string `json:"forEach,omitempty" yaml:"forEach,omitempty"` // expression resolving to slice/array
+		As      string `json:"as,omitempty" yaml:"as,omitempty"`           // loop variable name
+		Task    *Task  `json:"task,omitempty" yaml:"task,omitempty"`       // template task
+	}
+
+	// AwaitSpec instructs the engine to wait for completion of previously
+	// emitted executions before considering the current task finished.
+	AwaitSpec struct {
+		Mode    string `json:"mode,omitempty" yaml:"mode,omitempty"`       // all|first|anyError (defaults to all)
+		Timeout string `json:"timeout,omitempty" yaml:"timeout,omitempty"` // duration string e.g. "10m"
+		Group   string `json:"on,omitempty" yaml:"on,omitempty"`           // named emit group (optional)
+		Merge   string `json:"merge,omitempty" yaml:"merge,omitempty"`     // append|replace
 	}
 
 	// Retry strategy for task

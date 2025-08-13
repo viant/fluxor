@@ -19,3 +19,16 @@ func EnsureExecutionContext(ctx context.Context, pairs ...string) context.Contex
 	}
 	return ctx
 }
+
+// EnsureExecutionContextValue ensures the execution-context map exists in ctx
+// and stores a single key/value pair. The key must be a string; the value can
+// be of any type.
+func EnsureExecutionContextValue(ctx context.Context, key string, value any) context.Context {
+	v := ctx.Value(ExecutionContextKey)
+	if v == nil {
+		ctx = context.WithValue(ctx, ExecutionContextKey, map[string]any{})
+	}
+	values := ctx.Value(ExecutionContextKey).(map[string]any)
+	values[key] = value
+	return ctx
+}

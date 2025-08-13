@@ -17,6 +17,14 @@ func WithProcessDAO(processDAO dao.Service[string, execution.Process]) Option {
 	}
 }
 
+// WithResultQueue sets the queue used by processor to publish completion
+// events back to allocator.
+func WithResultQueue(q messaging.Queue[execution.Execution]) Option {
+	return func(s *Service) {
+		s.resultQueue = q
+	}
+}
+
 func WithTaskExecutionDAO(taskExecutionDao dao.Service[string, execution.Execution]) Option {
 	return func(s *Service) {
 		s.taskExecutionDao = taskExecutionDao

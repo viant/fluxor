@@ -11,32 +11,36 @@ import (
 
 // Execution represents a single task execution
 type Execution struct {
-	ID             string                 `json:"id"`
-	ProcessID      string                 `json:"processId"`
-	ParentTaskID   string                 `json:"parentTaskId,omitempty"`
-	GroupID        string                 `json:"groupId,omitempty"`
-	TaskID         string                 `json:"taskId"`
-	State          TaskState              `json:"state"`
-	Data           map[string]interface{} `json:"data,omitempty"`
-	Input          interface{}            `json:"input,omitempty"`
-	Output         interface{}            `json:"empty,omitempty"`
-	Error          string                 `json:"error,omitempty"`
-	Attempts       int                    `json:"attempts,omitempty"`
-	ScheduledAt    time.Time              `json:"scheduledAt"`
-	StartedAt      *time.Time             `json:"startedAt,omitempty"`
-	PausedAt       *time.Time             `json:"exectedAt,omitempty"`
-	CompletedAt    *time.Time             `json:"completedAt,omitempty"`
-	GoToTask       string                 `json:"gotoTask,omitempty"`
-	Meta           map[string]interface{} `json:"meta,omitempty"`
-	RunAfter       *time.Time             `json:"runAfter,omitempty"`
-	DependsOn      []string               `json:"dependencies"`
-	Dependencies   map[string]TaskState   `json:"completed,omitempty"`
-	Service        string                 `json:"service,omitempty"`
-	Method         string                 `json:"method,omitempty"`
-	AtHoc          bool                   `json:"atHoc,omitempty"`
-	mux            sync.RWMutex           `json:"-"`
-	Approved       *bool                  `json:"approved,omitempty"`
-	ApprovalReason string                 `json:"approvedDecision,omitempty"` // "yes" or "no"
+	ID           string                 `json:"id"`
+	ProcessID    string                 `json:"processId"`
+	ParentTaskID string                 `json:"parentTaskId,omitempty"`
+	GroupID      string                 `json:"groupId,omitempty"`
+	TaskID       string                 `json:"taskId"`
+	State        TaskState              `json:"state"`
+	Data         map[string]interface{} `json:"data,omitempty"`
+	Input        interface{}            `json:"input,omitempty"`
+	Output       interface{}            `json:"empty,omitempty"`
+	Error        string                 `json:"error,omitempty"`
+	Attempts     int                    `json:"attempts,omitempty"`
+	ScheduledAt  time.Time              `json:"scheduledAt"`
+	StartedAt    *time.Time             `json:"startedAt,omitempty"`
+	PausedAt     *time.Time             `json:"exectedAt,omitempty"`
+	CompletedAt  *time.Time             `json:"completedAt,omitempty"`
+	GoToTask     string                 `json:"gotoTask,omitempty"`
+	Meta         map[string]interface{} `json:"meta,omitempty"`
+	RunAfter     *time.Time             `json:"runAfter,omitempty"`
+	DependsOn    []string               `json:"dependencies"`
+	Dependencies map[string]TaskState   `json:"completed,omitempty"`
+	Service      string                 `json:"service,omitempty"`
+	Method       string                 `json:"method,omitempty"`
+	AtHoc        bool                   `json:"atHoc,omitempty"`
+	// CorrelationID is set when this execution is part of an asynchronous
+	// fan-out group emitted by a parent task.  The value is shared across all
+	// children of that group and by the parent waiting for their completion.
+	CorrelationID  string       `json:"cid,omitempty"`
+	mux            sync.RWMutex `json:"-"`
+	Approved       *bool        `json:"approved,omitempty"`
+	ApprovalReason string       `json:"approvedDecision,omitempty"` // "yes" or "no"
 }
 
 func (e *Execution) AtHocTask() *graph.Task {
@@ -177,6 +181,12 @@ func (e *Execution) Merge(execution *Execution) {
 
 func (e *Execution) Skip() {
 	e.State = TaskStateSkipped
+}
+
+// IsWaitingAsync reports whether the execution is currently waiting for
+// asynchronous child tasks to complete.
+func (e *Execution) IsWaitingAsync() bool {
+	return e.State == TaskStateWaitAsync
 }
 
 // generateExecutionID creates a unique ID for an execution

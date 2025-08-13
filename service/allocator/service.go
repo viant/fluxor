@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/viant/fluxor/tracing"
 	"log"
 	"reflect"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/progress"
+	"github.com/viant/fluxor/runtime/correlation"
 	execution "github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/runtime/expander"
 	"github.com/viant/fluxor/service/dao"
@@ -89,13 +91,15 @@ func addDynamicTask(allTasks map[string]*graph.Task, task *graph.Task) {
 // Config represents allocator service configuration
 type Config struct {
 	// PollingInterval is how often the allocator checks for processes that need tasks
-	PollingInterval time.Duration
+	PollingInterval   time.Duration
+	GroupTimeoutCheck time.Duration // how often to scan for timeouts
 }
 
 // DefaultConfig returns the default allocator configuration
 func DefaultConfig() Config {
 	return Config{
-		PollingInterval: 20 * time.Millisecond,
+		PollingInterval:   20 * time.Millisecond,
+		GroupTimeoutCheck: time.Second,
 	}
 }
 
@@ -105,26 +109,189 @@ type Service struct {
 	processDAO       dao.Service[string, execution.Process]
 	taskExecutionDao dao.Service[string, execution.Execution]
 	queue            messaging.Queue[execution.Execution]
+	resultQueue      messaging.Queue[execution.Execution]
+	correlationStore *correlation.Store
+	groupDAO         correlation.DAO
 	shutdownCh       chan struct{}
 	// serialize scheduling to prevent overlapping allocation passes
-	scheduleMu sync.Mutex
+	scheduleMu    sync.Mutex
+	timeoutTicker *time.Ticker
+}
+
+// rehydrateGroups loads persisted correlation groups from DAO into the
+// in-memory store so that allocator can resume waiting logic after a restart.
+func (s *Service) rehydrateGroups(ctx context.Context) {
+	if s.groupDAO == nil || s.correlationStore == nil {
+		return
+	}
+	groups, err := s.groupDAO.List(ctx)
+	if err != nil {
+		return
+	}
+	for _, g := range groups {
+		if g == nil {
+			continue
+		}
+		s.correlationStore.Create(g)
+		if g.Done() {
+			// Parent may still be stuck in waitAsync; unblock immediately.
+			s.unblockParent(ctx, g)
+			s.correlationStore.Delete(g.ID)
+			_ = s.groupDAO.Delete(ctx, g.ID)
+		}
+	}
+}
+
+// listenResults consumes completion notifications from processor and updates
+// correlation groups.  In phase 4.1 we only acknowledge messages; group
+// handling will be implemented in later steps.
+func (s *Service) listenResults(ctx context.Context) {
+	for {
+		msg, err := s.resultQueue.Consume(ctx)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if msg == nil {
+			continue
+		}
+
+		exec := msg.T()
+		cid := exec.CorrelationID
+		if cid == "" {
+			_ = msg.Ack()
+			continue
+		}
+		group := s.correlationStore.Get(cid)
+		if group == nil {
+			_ = msg.Ack()
+			continue // unknown group – maybe already handled
+		}
+		failed := exec.State == execution.TaskStateFailed || exec.State == execution.TaskStateCancelled
+		done := group.MarkDone(failed, exec.Output)
+		if s.groupDAO != nil {
+			_ = s.groupDAO.Save(ctx, group)
+		}
+		if done {
+			// Resolve the parent execution and unblock it.
+			s.unblockParent(ctx, group)
+			s.correlationStore.Delete(cid)
+			if s.groupDAO != nil {
+				_ = s.groupDAO.Delete(ctx, cid)
+			}
+		}
+		_ = msg.Ack()
+	}
+}
+
+// unblockParent transitions the waiting parent execution back into the queue
+// so the workflow can proceed once all async children are completed.
+func (s *Service) unblockParent(ctx context.Context, g *correlation.Group) {
+	if g == nil {
+		return
+	}
+	// Load parent execution
+	parentExec, err := s.taskExecutionDao.Load(ctx, g.ParentExecID)
+	if err != nil || parentExec == nil {
+		return
+	}
+
+	// Determine aggregate state – if any child failed, mark parent failed.
+	if g.Failed() {
+		parentExec.State = execution.TaskStateFailed
+	} else {
+		parentExec.State = execution.TaskStatePending // re-schedule for post-processing
+	}
+
+	// Merge strategy – normalise outputs by dereferencing any *interface{}
+	// produced by the executor when actions declare interface{} as their
+	// return type.
+	outs := g.AggregateOutputs()
+	for i, v := range outs {
+		if p, ok := v.(*interface{}); ok && p != nil {
+			outs[i] = *p
+		}
+	}
+	if len(outs) > 0 {
+		if strings.ToLower(g.Merge) == "replace" {
+			parentExec.Output = outs[len(outs)-1]
+		} else {
+			// append (default)
+			switch existing := parentExec.Output.(type) {
+			case nil:
+				parentExec.Output = outs
+			case []interface{}:
+				parentExec.Output = append(existing, outs...)
+			default:
+				parentExec.Output = append([]interface{}{existing}, outs...)
+			}
+		}
+	}
+	// Remove waiting flag
+	if parentExec.Meta != nil {
+		delete(parentExec.Meta, "cid")
+	}
+
+	_ = s.taskExecutionDao.Save(ctx, parentExec)
+
+	// Best-effort propagate the aggregated output to the process session so
+	// that callers observing the process immediately after the fan-in can see
+	// the value even before the processor completes post-processing of the
+	// parent task.
+	if proc, err := s.processDAO.Load(ctx, g.ParentProcessID); err == nil && proc != nil {
+		if task := proc.LookupTask(parentExec.TaskID); task != nil && task.Namespace != "" {
+			if parentExec.Output != nil {
+				proc.Session.Set(task.Namespace, parentExec.Output)
+				_ = s.processDAO.Save(ctx, proc)
+			}
+		}
+	}
+	// Re-enqueue the parent so processor can complete it (post, goto, etc.)
+	_ = s.queue.Publish(ctx, parentExec)
+
+	if s.groupDAO != nil {
+		_ = s.groupDAO.Delete(ctx, g.ID)
+	}
 }
 
 // New creates a new allocator service
-func New(processDAO dao.Service[string, execution.Process], taskExecutionDao dao.Service[string, execution.Execution], queue messaging.Queue[execution.Execution], config Config) *Service {
+func New(processDAO dao.Service[string, execution.Process], taskExecutionDao dao.Service[string, execution.Execution], queue messaging.Queue[execution.Execution], resultQ messaging.Queue[execution.Execution], store *correlation.Store, groupDAO correlation.DAO, config Config) *Service {
 	return &Service{
 		config:           config,
 		processDAO:       processDAO,
 		taskExecutionDao: taskExecutionDao,
 		queue:            queue,
+		resultQueue:      resultQ,
+		correlationStore: store,
+		groupDAO:         groupDAO,
 		shutdownCh:       make(chan struct{}),
 	}
 }
 
 // Start begins the task allocation loop
 func (s *Service) Start(ctx context.Context) error {
+	// Rehydrate persisted correlation groups on startup so that waiting parent
+	// tasks survive allocator restarts.
+	s.rehydrateGroups(ctx)
+
+	// Launch listener for finished child executions if resultQueue provided
+	if s.resultQueue != nil {
+		go s.listenResults(ctx)
+	}
 	ticker := time.NewTicker(s.config.PollingInterval)
 	defer ticker.Stop()
+
+	// timeout sweep ticker – use nil channel when unavailable to avoid nil
+	// pointer dereference in select.
+	var timeoutCh <-chan time.Time
+	if s.correlationStore != nil {
+		s.timeoutTicker = time.NewTicker(s.config.GroupTimeoutCheck)
+		defer s.timeoutTicker.Stop()
+		timeoutCh = s.timeoutTicker.C
+	}
 
 	for {
 		select {
@@ -137,6 +304,39 @@ func (s *Service) Start(ctx context.Context) error {
 				// Log error but continue
 				fmt.Printf("Error allocating tasks: %v\n", err)
 			}
+		case <-timeoutCh:
+			s.handleTimeouts(ctx)
+		}
+	}
+}
+
+// handleTimeouts scans correlation groups for expired timeouts.
+func (s *Service) handleTimeouts(ctx context.Context) {
+	if s.correlationStore == nil {
+		return
+	}
+	// naive iteration – map copy to avoid holding lock long.
+	ids := []string{}
+	s.correlationStore.Iterate(func(id string, g *correlation.Group) {
+		if g.TimedOut() {
+			ids = append(ids, id)
+		}
+	})
+
+	for _, id := range ids {
+		g := s.correlationStore.Get(id)
+		if g == nil || !g.TimedOut() {
+			continue
+		}
+		// mark as failed
+		g.MarkDone(true, nil)
+		if s.groupDAO != nil {
+			_ = s.groupDAO.Save(ctx, g)
+		}
+		s.unblockParent(ctx, g)
+		s.correlationStore.Delete(id)
+		if s.groupDAO != nil {
+			_ = s.groupDAO.Delete(ctx, id)
 		}
 	}
 }
@@ -260,6 +460,13 @@ func (s *Service) scheduleNextTasks(ctx context.Context, process *execution.Proc
 		return s.handleProcessedExecution(ctx, process, anExecution, dependencyState)
 	}
 
+	// If this execution is explicitly waiting for async children to complete,
+	// do not advance it here – the result listener will flip the state back to
+	// pending and re-enqueue when the rendez-vous condition is satisfied.
+	if anExecution.IsWaitingAsync() {
+		return nil
+	}
+
 	switch anExecution.State {
 	case execution.TaskStateWaitForDependencies, execution.TaskStatePending:
 		if currentTask.Action != nil {
@@ -345,6 +552,117 @@ func (s *Service) handlePendingTask(ctx context.Context, process *execution.Proc
 			return true, err
 		}
 		return true, nil
+	}
+
+	// Handle async fan-out via emit/await
+	if currentTask.Emit != nil {
+		// If this execution already has an Output it means we have previously
+		// performed the emit and resumed after awaiting child completions. Do not
+		// re-emit again or we will loop indefinitely. Let normal scheduling below
+		// advance the task to completion (and post-processing) instead.
+		if anExecution.Output != nil {
+			return false, nil
+		}
+		spec := currentTask.Emit
+		// Expand the forEach expression into a slice of items
+		raw := interface{}(nil)
+		if spec.ForEach != "" {
+			if v, expErr := process.Session.Expand(spec.ForEach); expErr == nil {
+				raw = v
+			} else {
+				return true, fmt.Errorf("failed to expand emit.forEach for task %s: %w", currentTask.ID, expErr)
+			}
+		}
+		if raw == nil {
+			// nothing to emit – continue with normal scheduling
+		} else {
+			items, convErr := toInterfaceSlice(raw)
+			if convErr != nil {
+				return true, fmt.Errorf("emit.forEach for task %s must be slice or array: %w", currentTask.ID, convErr)
+			}
+			// If there are children to emit – create a correlation group and schedule children.
+			if len(items) > 0 {
+				// Build correlation group
+				mode := "all"
+				merge := "append"
+				var timeoutAt *time.Time
+				if currentTask.Await != nil {
+					if m := strings.ToLower(currentTask.Await.Mode); m != "" {
+						mode = m
+					}
+					if mg := strings.ToLower(currentTask.Await.Merge); mg != "" {
+						merge = mg
+					}
+					if d := currentTask.Await.Timeout; d != "" {
+						if dur, perr := time.ParseDuration(d); perr == nil {
+							t := time.Now().Add(dur)
+							timeoutAt = &t
+						}
+					}
+				}
+
+				// Create correlation group and persist
+				cid := uuid.New().String()
+				group := &correlation.Group{
+					ID:              cid,
+					ParentProcessID: process.ID,
+					ParentExecID:    anExecution.ID,
+					Expected:        len(items),
+					Mode:            mode,
+					Merge:           merge,
+					TimeoutAt:       timeoutAt,
+				}
+				if s.correlationStore != nil {
+					s.correlationStore.Create(group)
+				}
+				if s.groupDAO != nil {
+					_ = s.groupDAO.Save(ctx, group)
+				}
+
+				// Emit child executions
+				for idx, item := range items {
+					// Clone the template subgraph (single task)
+					childTemplate := spec.Task
+					if childTemplate == nil {
+						continue
+					}
+					clone := childTemplate.Clone()
+					if clone.ID == "" {
+						clone.ID = fmt.Sprintf("%s[%d]", currentTask.ID, idx)
+					} else {
+						clone.ID = fmt.Sprintf("%s.%s[%d]", currentTask.ID, clone.ID, idx)
+					}
+					// Register task in process so executor can look it up
+					process.RegisterTask(clone)
+					// Create execution bound to current task as parent
+					childExec := execution.NewExecution(process.ID, currentTask, clone)
+					// Seed task-scoped data with the loop variable if provided
+					if spec.As != "" {
+						childExec.Data = map[string]interface{}{spec.As: item}
+					}
+					// Attach correlation id so processor publishes completion to result queue
+					childExec.CorrelationID = cid
+					// Persist and enqueue child execution
+					if err := s.taskExecutionDao.Save(ctx, childExec); err == nil {
+						_ = s.queue.Publish(ctx, childExec)
+					}
+				}
+
+				// Mark parent as waiting for async results and persist
+				anExecution.State = execution.TaskStateWaitAsync
+				if anExecution.Meta == nil {
+					anExecution.Meta = map[string]interface{}{}
+				}
+				anExecution.Meta["cid"] = group.ID
+				if err := s.taskExecutionDao.Save(ctx, anExecution); err != nil {
+					return true, err
+				}
+				if err := s.processDAO.Save(ctx, process); err != nil {
+					return true, err
+				}
+				return true, nil
+			}
+		}
 	}
 
 	// If task has scheduleIn and this is the first time we reach scheduling

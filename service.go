@@ -6,6 +6,7 @@ import (
 	"github.com/viant/afs/storage"
 	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model/types"
+	"github.com/viant/fluxor/runtime/correlation"
 	"github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/action/nop"
 	"github.com/viant/fluxor/service/action/printer"
@@ -66,6 +67,14 @@ func (s *Service) init(options []Option) {
 	// Create executor after injecting approvalService option
 	s.executor = texecutor.NewService(s.actions, s.executorOptions...)
 
+	// Ensure runtime facilities used by processor/allocator are initialised
+	if s.runtime.correlationStore == nil {
+		s.runtime.correlationStore = correlation.NewStore()
+	}
+	if s.runtime.resultQueue == nil {
+		s.runtime.resultQueue = mmemory.NewQueue[execution.Execution](mmemory.DefaultConfig())
+	}
+
 	workers := s.config.Processor.WorkerCount
 	if s.processorWorkers > 0 {
 		workers = s.processorWorkers
@@ -76,6 +85,7 @@ func (s *Service) init(options []Option) {
 		processor.WithWorkers(workers),
 		processor.WithSessionListeners(s.stateListeners...),
 		processor.WithWhenListeners(s.whenListeners...),
+		processor.WithResultQueue(s.runtime.resultQueue),
 		processor.WithTaskExecutionDAO(s.runtime.taskExecutionDao),
 		processor.WithProcessDAO(s.runtime.processorDAO))
 
@@ -88,7 +98,10 @@ func (s *Service) init(options []Option) {
 	}
 	s.runtime.workflowService = aworkflow.New(s.runtime.processor, s.runtime.workflowDAO, s.runtime.processorDAO)
 	s.actions.Register(s.runtime.workflowService)
-	s.runtime.allocator = allocator.New(s.runtime.processorDAO, s.runtime.taskExecutionDao, s.queue, allocator.DefaultConfig())
+	if s.runtime.groupDAO == nil {
+		s.runtime.groupDAO = correlation.NewMemoryDAO()
+	}
+	s.runtime.allocator = allocator.New(s.runtime.processorDAO, s.runtime.taskExecutionDao, s.queue, s.runtime.resultQueue, s.runtime.correlationStore, s.runtime.groupDAO, allocator.DefaultConfig())
 	// expose the shared queue on the runtime for ad-hoc executions
 	s.runtime.queue = s.queue
 

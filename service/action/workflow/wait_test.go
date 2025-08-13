@@ -15,8 +15,10 @@ import (
 func TestWaitForProcess(t *testing.T) {
 	ctx := context.Background()
 
-	// Prepare a completed process in the in-memory DAO.
-	p := execution.NewProcess("proc-test", "demo", nil, nil)
+	// Prepare a completed process in the in-memory DAO. The helper expects
+	// five parameters after the recent API evolution – pass nil for optional
+	// parts we do not rely on in this unit-test.
+	p := execution.NewProcess("proc-test", "demo", nil, nil, nil)
 	p.SetState(execution.StateCompleted)
 
 	pDao := processdao.New()

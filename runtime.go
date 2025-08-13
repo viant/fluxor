@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"github.com/google/uuid"
+	"os"
 	"time"
 
 	"github.com/viant/fluxor/internal/clock"
 
 	"github.com/viant/fluxor/model"
+	"github.com/viant/fluxor/runtime/correlation"
 	"github.com/viant/fluxor/runtime/execution"
 	aworkflow "github.com/viant/fluxor/service/action/workflow"
 	"github.com/viant/fluxor/service/allocator"
@@ -63,6 +65,16 @@ func (r *Runtime) UpsertDefinition(location string, data []byte) error {
 
 	// Store in cache for immediate availability.
 	r.workflowDAO.Upsert(location, wf)
+
+	// Persist the raw YAML to the meta-service's underlying storage so that a
+	// subsequent RefreshWorkflow (which merely invalidates the in-memory cache)
+	// can reload the definition. We purposely ignore any write error here and
+	// return it to the caller – the cached copy is still available but the
+	// round-trip behaviour verified by unit tests relies on the file being
+	// present on disk.
+	if err := os.WriteFile(location, data, 0o644); err != nil {
+		return fmt.Errorf("failed to persist workflow definition to %s: %w", location, err)
+	}
 	return nil
 }
 
@@ -115,6 +127,120 @@ func (r *Runtime) RunTaskOnce(ctx context.Context, wf *model.Workflow, taskID st
 	return exec.Output, nil
 }
 
+// EmitExecutions fan-outs child executions and marks the parent as waiting.
+// It returns immediately; the caller may ignore the returned correlation id if
+// the task uses await:true and lets the engine resume automatically.
+func (r *Runtime) EmitExecutions(ctx context.Context, parent *execution.Execution, children []*execution.Execution) (string, error) {
+	if len(children) == 0 {
+		return "", fmt.Errorf("no child executions supplied")
+	}
+	if r == nil || r.correlationStore == nil {
+		return "", fmt.Errorf("runtime correlation store not initialised")
+	}
+	// Create correlation group
+	id := uuid.New().String()
+	group := &correlation.Group{
+		ID:              id,
+		ParentProcessID: parent.ProcessID,
+		ParentExecID:    parent.ID,
+		Expected:        len(children),
+		Mode:            "all",
+		Merge:           "append",
+	}
+	r.correlationStore.Create(group)
+	if r.groupDAO != nil {
+		_ = r.groupDAO.Save(ctx, group)
+	}
+
+	// Enqueue children
+	for _, child := range children {
+		child.ProcessID = parent.ProcessID
+		child.CorrelationID = id
+		child.State = execution.TaskStatePending
+		child.ScheduledAt = clock.Now()
+		_ = r.queue.Publish(ctx, child)
+	}
+
+	// Put the parent into waiting state; any further persistence will be done by
+	// caller (processor) before returning.
+	parent.State = execution.TaskStateWaitAsync
+	if parent.Meta == nil {
+		parent.Meta = map[string]interface{}{}
+	}
+	parent.Meta["cid"] = id
+
+	return id, nil
+}
+
+// AwaitGroup blocks until the correlation group with the given id completes or
+// the timeout elapses. It returns the aggregated child outputs as recorded by
+// the allocator when unblocking the parent. The method observes ctx.Done.
+func (r *Runtime) AwaitGroup(ctx context.Context, id string, timeout time.Duration) ([]interface{}, error) {
+	if id == "" {
+		return nil, fmt.Errorf("empty correlation id")
+	}
+	deadline := time.Now().Add(timeout)
+	// Prefer in-memory store when available to avoid DAO round-trips.
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		var g *correlation.Group
+		if r.correlationStore != nil {
+			g = r.correlationStore.Get(id)
+		}
+		if g == nil && r.groupDAO != nil {
+			// Attempt to rehydrate from DAO (e.g. after restart).
+			if gg, _ := r.groupDAO.Load(ctx, id); gg != nil {
+				// Do not insert back into the store to avoid interfering with allocator cleanup.
+				g = gg
+			}
+		}
+		if g != nil {
+			if g.Done() {
+				return g.AggregateOutputs(), nil
+			}
+			if g.TimedOut() {
+				return nil, fmt.Errorf("correlation %s timed out", id)
+			}
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("timeout waiting for correlation %s", id)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// WaitForUnblock blocks until the specified execution transitions out of the
+// waitAsync state (i.e. allocator unblocks the parent after async children are
+// completed). It returns the refreshed execution.
+func (r *Runtime) WaitForUnblock(ctx context.Context, execID string, timeout time.Duration) (*execution.Execution, error) {
+	if execID == "" {
+		return nil, fmt.Errorf("empty execution id")
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		exec, err := r.taskExecutionDao.Load(ctx, execID)
+		if err != nil {
+			return nil, err
+		}
+		if exec.State != execution.TaskStateWaitAsync {
+			return exec, nil
+		}
+		if time.Now().After(deadline) {
+			return exec, fmt.Errorf("timeout waiting for execution %q to unblock", execID)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // Runtime represents a workflow engine runtime
 type Runtime struct {
 	workflowService  *aworkflow.Service
@@ -124,7 +250,10 @@ type Runtime struct {
 	processor        *processor.Service
 	allocator        *allocator.Service
 	// queue is the shared execution queue (processor inbound)
-	queue messaging.Queue[execution.Execution]
+	queue            messaging.Queue[execution.Execution]
+	correlationStore *correlation.Store
+	resultQueue      messaging.Queue[execution.Execution]
+	groupDAO         correlation.DAO
 }
 
 // LoadWorkflow loads a workflow

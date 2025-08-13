@@ -5,15 +5,18 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"testing"
+	"time"
+
 	"github.com/stretchr/testify/assert"
 	_ "github.com/viant/afs/embed"
 	"github.com/viant/fluxor"
+	"github.com/viant/fluxor/model/types"
 	"github.com/viant/fluxor/policy"
 	"github.com/viant/fluxor/runtime/execution"
 	"github.com/viant/fluxor/service/approval"
 	"github.com/viant/fluxor/service/executor"
-	"testing"
-	"time"
 )
 
 //go:embed testdata/*
@@ -155,4 +158,83 @@ func TestTemplate(t *testing.T) {
 	fmt.Println("done")
 	// Process should complete without errors
 	assert.EqualValues(t, execution.StateCompleted, output.State)
+}
+
+// ---------------------------------------------------------------------------
+// Async emit/await E2E test
+// ---------------------------------------------------------------------------
+
+type addSvc struct{}
+
+func (s *addSvc) Name() string { return "math/add" }
+
+func (s *addSvc) Methods() types.Signatures {
+	return types.Signatures{{
+		Name:   "exec",
+		Input:  reflect.TypeOf(map[string]interface{}{}),
+		Output: reflect.TypeOf((*interface{})(nil)).Elem(),
+	}}
+}
+
+func (s *addSvc) Method(name string) (types.Executable, error) {
+	return func(ctx context.Context, in, out interface{}) error {
+		m := in.(*map[string]interface{})
+		a := int((*m)["a"].(float64))
+		b := int((*m)["b"].(float64))
+		sum := a + b
+		ptr := out.(*interface{})
+		*ptr = sum
+		return nil
+	}, nil
+}
+
+func TestAsyncEmitAwait(t *testing.T) {
+	srv := fluxor.New()
+	// register test add service
+	srv.Actions().Register(&addSvc{})
+
+	rt := srv.Runtime()
+	ctx := context.Background()
+
+	yaml := []byte(`
+name: asyncAdd
+pipeline:
+  tasks:
+    parent:
+      emit:
+        forEach: ${numbers}
+        as: p
+        task:
+          add:
+            action: math/add:exec
+            input:
+              a: ${p.a}
+              b: ${p.b}
+      await: true
+`)
+
+	assert.NoError(t, rt.UpsertDefinition("asyncAdd.yaml", yaml))
+	wf, err := rt.LoadWorkflow(ctx, "asyncAdd.yaml")
+	assert.NoError(t, err)
+
+	_ = rt.Start(ctx)
+
+	init := map[string]interface{}{
+		"numbers": []interface{}{
+			map[string]int{"a": 1, "b": 2},
+			map[string]int{"a": 3, "b": 4},
+		},
+	}
+
+	_, wait, err := rt.StartProcess(ctx, wf, init)
+	assert.NoError(t, err)
+
+	out, err := wait(ctx, 2*time.Second)
+	assert.NoError(t, err)
+
+	if parentOut, ok := out.Output["parent"].([]interface{}); ok {
+		assert.ElementsMatch(t, []interface{}{3, 7}, parentOut)
+	} else {
+		t.Fatalf("parent output missing or wrong type: %v", out.Output)
+	}
 }

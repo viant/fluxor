@@ -51,8 +51,9 @@ type Service struct {
 	sessListeners    []execution.StateListener
 	whenListeners    []execution.WhenListener
 
-	queue    messaging.Queue[execution.Execution]
-	executor executor.Service
+	queue       messaging.Queue[execution.Execution]
+	executor    executor.Service
+	resultQueue messaging.Queue[execution.Execution]
 
 	// Track active executions
 	workers    []*worker
@@ -478,6 +479,9 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 		if daoErr := s.taskExecutionDao.Save(ctx, anExecution); daoErr != nil {
 			return message.Nack(fmt.Errorf("encounter error: %w, and failed to save execution: %v", err, daoErr))
 		}
+		if anExecution.CorrelationID != "" && s.resultQueue != nil {
+			_ = s.resultQueue.Publish(ctx, anExecution.Clone())
+		}
 
 		// ------------------------------------------------------------------
 		// Propagate the failed state to the process so that the allocator can
@@ -518,6 +522,17 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 		return message.Ack()
 	}
 
+	// If the action has transitioned the execution into waitAsync (programmatic
+	// emit/await), do not mark it as completed here. Persist the intermediate
+	// state and acknowledge the message – allocator will resume once the async
+	// group completes.
+	if anExecution.State == execution.TaskStateWaitAsync {
+		if err := s.taskExecutionDao.Save(ctx, anExecution); err != nil {
+			return message.Nack(err)
+		}
+		return message.Ack()
+	}
+
 	task := process.LookupTask(anExecution.TaskID)
 	if task != nil && task.IsAutoPause() {
 		anExecution.Pause()
@@ -530,6 +545,10 @@ func (s *Service) processMessage(ctx context.Context, message messaging.Message[
 	// Update the process with the completed execution
 	if err := s.taskExecutionDao.Save(ctx, anExecution); err != nil {
 		return message.Nack(err)
+	}
+	// Notify allocator about completion of async child, if any.
+	if anExecution.CorrelationID != "" && s.resultQueue != nil {
+		_ = s.resultQueue.Publish(ctx, anExecution.Clone())
 	}
 
 	// allocator will pick up the persisted execution and update the process;

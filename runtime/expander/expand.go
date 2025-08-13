@@ -245,7 +245,16 @@ func expandExpression(expr string, from map[string]interface{}) interface{} {
 					return nil
 				}
 			}
+		case map[string]string:
+			if current, ok = c[parts[i]]; !ok {
+				return nil
+			}
 		default:
+			// Generic map handling via reflection: support map[string]T for any T
+			if mv, ok := getMapValue(current, parts[i]); ok {
+				current = mv
+				continue
+			}
 			// Try to use reflection for structs and other types
 			current = getProperty(current, parts[i])
 			if current == nil {
@@ -254,7 +263,7 @@ func expandExpression(expr string, from map[string]interface{}) interface{} {
 		}
 	}
 
-	return current
+	return toJSONNumber(current)
 }
 
 // handleNestedExpression handles complex expressions with array indexing
@@ -363,10 +372,19 @@ func processPath(obj interface{}, path string) interface{} {
 				if current, ok = c[propName]; !ok {
 					return nil
 				}
-			default:
-				current = getProperty(current, propName)
-				if current == nil {
+			case map[string]string:
+				var ok bool
+				if current, ok = c[propName]; !ok {
 					return nil
+				}
+			default:
+				if mv, ok := getMapValue(current, propName); ok {
+					current = mv
+				} else {
+					current = getProperty(current, propName)
+					if current == nil {
+						return nil
+					}
 				}
 			}
 
@@ -375,7 +393,7 @@ func processPath(obj interface{}, path string) interface{} {
 		}
 	}
 
-	return current
+	return toJSONNumber(current)
 }
 
 // getProperty uses reflection to get a property from a struct or map
@@ -384,12 +402,16 @@ func getProperty(obj interface{}, prop string) interface{} {
 		return nil
 	}
 
-	// Handle maps
+	// Handle maps – fast-path for map[string]interface{}
 	if mapObj, ok := obj.(map[string]interface{}); ok {
 		if val, exists := mapObj[prop]; exists {
 			return val
 		}
 		return nil
+	}
+	// Generic map via reflection
+	if v, ok := getMapValue(obj, prop); ok {
+		return v
 	}
 
 	// Use reflection for structs
@@ -426,6 +448,34 @@ func getProperty(obj interface{}, prop string) interface{} {
 	}
 
 	return field.Interface()
+}
+
+// getMapValue attempts to read a value from any map with string keys via reflection.
+// Returns (value, true) when obj is a map[string]T and key exists.
+func getMapValue(obj interface{}, key string) (interface{}, bool) {
+	val := reflect.ValueOf(obj)
+	if val.Kind() == reflect.Ptr {
+		if val.IsNil() {
+			return nil, false
+		}
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Map {
+		return nil, false
+	}
+	// key must be string
+	if val.Type().Key().Kind() != reflect.String {
+		return nil, false
+	}
+	k := reflect.ValueOf(key)
+	v := val.MapIndex(k)
+	if !v.IsValid() {
+		return nil, false
+	}
+	if !v.CanInterface() {
+		return nil, false
+	}
+	return v.Interface(), true
 }
 
 // getArrayElement extracts an element from an array or slice using reflection
@@ -487,6 +537,25 @@ func stringify(val interface{}) string {
 // hasExpr checks if a string contains any variable expression.
 func hasExpr(value string) bool {
 	return strings.Contains(value, "$")
+}
+
+// toJSONNumber coerces integer-typed values to float64 to mimic JSON/YAML
+// default decoding semantics used throughout the engine/tests. Floating-point
+// values are returned as float64 unchanged. Other types are returned as-is.
+func toJSONNumber(v interface{}) interface{} {
+	if v == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return float64(rv.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return float64(rv.Uint())
+	case reflect.Float32, reflect.Float64:
+		return float64(rv.Float())
+	}
+	return v
 }
 
 // evaluateWithArrayIndexing attempts to evaluate simple arithmetic expressions

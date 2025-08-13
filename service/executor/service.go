@@ -324,7 +324,14 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 
 	// Invoke the user-defined method.
 	err = method(ctx, input, output)
-	anExecution.Output = output
+	// Normalise Output: when the declared output type is interface{}, we pass
+	// a pointer to interface{} to the method. Replace it with the concrete
+	// value to avoid leaking a pointer wrapper into the rest of the engine.
+	if p, ok := output.(*interface{}); ok && p != nil {
+		anExecution.Output = *p
+	} else {
+		anExecution.Output = output
+	}
 	if err != nil {
 		anExecution.Error = err.Error()
 		spanErr = err

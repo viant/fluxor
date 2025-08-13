@@ -244,6 +244,26 @@ func (s *Service) parseWorkflow(node *yml.Node, workflow *model.Workflow) error 
 			}
 			workflow.Post = post
 		case rootNodeName:
+			// The pipeline node supports two YAML forms:
+			//  1. Direct mapping/sequence of tasks.
+			//       pipeline:
+			//         taskA: { ... }
+			//  2. A wrapper object carrying additional metadata such as `kind` plus
+			//     the actual tasks under a nested `tasks:` field.
+			//       pipeline:
+			//         kind: Sequence
+			//         tasks: [ ... ]
+			//     Historically only the first form was supported which led to
+			//     mis-parsing of the second, causing errors like
+			//       "task node should be a mapping".
+			//     Below we transparently unwrap the second representation so that the
+			//     existing task parsing logic can operate unchanged.
+			if valueNode != nil && valueNode.Kind == yaml.MappingNode {
+				if tasksField := valueNode.Lookup("tasks"); tasksField != nil {
+					valueNode = tasksField
+				}
+			}
+
 			pipeline, err := s.parseRootTask(valueNode)
 			if err != nil {
 				return fmt.Errorf("failed to parse pipeline: %w", err)
@@ -485,6 +505,18 @@ func (s *Service) parseTask(id string, node *yml.Node) (*graph.Task, error) {
 				task.Action = &graph.Action{}
 			}
 			task.Action.Input = valueNode.Interface()
+		case "emit":
+			emitSpec, err := s.parseEmitSpec(valueNode)
+			if err != nil {
+				return err
+			}
+			task.Emit = emitSpec
+		case "await":
+			awaitSpec, err := s.parseAwaitSpec(valueNode)
+			if err != nil {
+				return err
+			}
+			task.Await = awaitSpec
 
 		// Handle template definitions: repeat a sub-task over a collection
 		case "template":
@@ -569,6 +601,105 @@ func parseTransition(node *yml.Node) (*graph.Transition, error) {
 	}
 
 	return transition, nil
+}
+
+// parseEmitSpec converts YAML node to graph.EmitSpec
+func (s *Service) parseEmitSpec(node *yml.Node) (*graph.EmitSpec, error) {
+	if node == nil {
+		return nil, fmt.Errorf("emit spec should be a mapping")
+	}
+	// Allow boolean false/true for backward compatibility – treat as nil or default behaviour
+	if node.Kind == yaml.ScalarNode {
+		// e.g., emit: false
+		if val, ok := node.Interface().(bool); ok && !val {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("emit spec must be a mapping, got scalar")
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("emit spec should be a mapping")
+	}
+
+	spec := &graph.EmitSpec{}
+
+	err := node.Pairs(func(key string, valueNode *yml.Node) error {
+		switch strings.ToLower(key) {
+		case "foreach":
+			if valueNode.Kind == yaml.ScalarNode {
+				spec.ForEach = valueNode.Value
+			}
+		case "as":
+			if valueNode.Kind == yaml.ScalarNode {
+				spec.As = valueNode.Value
+			}
+		case "task":
+			// Expect mapping with a single top-level key (task id)
+			if valueNode.Kind != yaml.MappingNode {
+				return fmt.Errorf("emit.task should be a mapping")
+			}
+			return valueNode.Pairs(func(id string, taskNode *yml.Node) error {
+				task, err := s.parseTask(id, taskNode)
+				if err != nil {
+					return err
+				}
+				spec.Task = task
+				return nil
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse emit spec: %w", err)
+	}
+	return spec, nil
+}
+
+// parseAwaitSpec converts YAML node to graph.AwaitSpec
+func (s *Service) parseAwaitSpec(node *yml.Node) (*graph.AwaitSpec, error) {
+	if node == nil {
+		return nil, fmt.Errorf("await spec is nil")
+	}
+	// If scalar boolean
+	if node.Kind == yaml.ScalarNode {
+		if val, ok := node.Interface().(bool); ok {
+			if !val {
+				return nil, nil // await: false – no waiting
+			}
+			// await: true – use default spec
+			return &graph.AwaitSpec{}, nil
+		}
+	}
+
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("await spec should be a mapping or bool")
+	}
+	spec := &graph.AwaitSpec{}
+
+	err := node.Pairs(func(key string, valueNode *yml.Node) error {
+		switch strings.ToLower(key) {
+		case "mode", "on":
+			if valueNode.Kind == yaml.ScalarNode {
+				if strings.ToLower(key) == "mode" {
+					spec.Mode = valueNode.Value
+				} else {
+					spec.Group = valueNode.Value
+				}
+			}
+		case "timeout":
+			if valueNode.Kind == yaml.ScalarNode {
+				spec.Timeout = valueNode.Value
+			}
+		case "merge":
+			if valueNode.Kind == yaml.ScalarNode {
+				spec.Merge = strings.ToLower(valueNode.Value)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse await spec: %w", err)
+	}
+	return spec, nil
 }
 
 // parseParameters converts a YAML node to state.State

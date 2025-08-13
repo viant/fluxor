@@ -1,0 +1,15 @@
+
+name: asyncAdd
+pipeline:
+  tasks:
+    parent:
+      emit:
+        forEach: ${numbers}
+        as: p
+        task:
+          add:
+            action: math/add:exec
+            input:
+              a: ${p.a}
+              b: ${p.b}
+      await: true

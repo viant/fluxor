@@ -3,6 +3,7 @@ package meta
 import (
 	"os"
 	"strings"
+	"unicode"
 )
 
 // expandEnvExpr replaces all occurrences of ${env.KEY} in the input
@@ -33,12 +34,34 @@ func expandEnvExpr(value string) string {
 			break
 		}
 
-		// Extract the env var name
+		// Extract the env var name candidate
 		key := value[startKey : startKey+endKey]
-		// Lookup and write its value
-		b.WriteString(os.Getenv(key))
 
-		// Advance i past the closing '}'
+		// Validate key – must consist solely of letters, digits or '_' (allow empty key).
+		valid := true
+		for _, r := range key {
+			if !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_') {
+				valid = false
+				break
+			}
+		}
+
+		if valid {
+			// Lookup and write its value (empty if unset or key is empty)
+			b.WriteString(os.Getenv(key))
+		} else {
+			// Invalid expression – treat the detected prefix as literal and
+			// continue scanning from immediately after it so that any nested
+			// expressions are still processed.
+			b.WriteString(value[i+idx : startKey])
+			// Move i right after the prefix, effectively consuming it but
+			// leaving the remainder (including the characters that caused the
+			// invalidation) to be re-evaluated in the next iteration.
+			i = startKey
+			continue
+		}
+
+		// Advance i past the closing '}' for valid expressions.
 		i = startKey + endKey + 1
 	}
 

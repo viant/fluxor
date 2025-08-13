@@ -9,6 +9,9 @@ const (
 	TaskStateRunning             TaskState = "running"
 	TaskStateWaitForDependencies TaskState = "waitForDependencies" //waiting for dependency
 	TaskStateWaitForSubTasks     TaskState = "waitForSubTasks"     //waiting for subtask
+	// TaskStateWaitAsync indicates the task emitted asynchronous child
+	// executions and is waiting until the rendez-vous condition is satisfied.
+	TaskStateWaitAsync TaskState = "waitAsync"
 	// TaskStateWaitForApproval indicates the task is waiting for explicit
 	// approval before it can be executed.  Used by the optional policy/approval
 	// mechanism.
