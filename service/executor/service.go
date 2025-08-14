@@ -8,11 +8,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/viant/fluxor/service/approval"
 	"log"
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/viant/fluxor/service/approval"
 
 	"github.com/viant/fluxor/extension"
 	"github.com/viant/fluxor/model/graph"
@@ -320,6 +321,14 @@ func (s *service) execute(ctx context.Context, anExecution *execution.Execution,
 	if err != nil {
 		spanErr = err
 		return spanErr
+	}
+
+	// If the caller supplied an execution-aware context, enrich it with the
+	// current process/execution/task so that action implementations can access
+	// them via execution.ContextValue and retrieve orchestrator/event services
+	// through ctx.Value.
+	if execCtx, ok := ctx.(*execution.Context); ok {
+		ctx = execCtx.ExecutionContext(aProcess, anExecution, task)
 	}
 
 	// Invoke the user-defined method.

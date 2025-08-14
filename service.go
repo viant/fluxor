@@ -8,6 +8,7 @@ import (
 	"github.com/viant/fluxor/model/types"
 	"github.com/viant/fluxor/runtime/correlation"
 	"github.com/viant/fluxor/runtime/execution"
+	"github.com/viant/fluxor/runtime/orchestrator"
 	"github.com/viant/fluxor/service/action/nop"
 	"github.com/viant/fluxor/service/action/printer"
 	"github.com/viant/fluxor/service/action/system/exec"
@@ -161,6 +162,11 @@ func (s *Service) ensureBaseSetup() {
 }
 
 func (s *Service) NewContext(ctx context.Context) context.Context {
+	// Inject the programmatic orchestrator into the base context so that
+	// task actions can retrieve it via orchestrator.FromContext(ctx).
+	if s != nil && s.runtime != nil {
+		ctx = context.WithValue(ctx, orchestrator.OrchestratorContextKey, orchestrator.New(s.runtime))
+	}
 	return execution.NewContext(ctx, s.actions, s.eventService)
 }
 

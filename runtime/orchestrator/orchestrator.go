@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	fluxor "github.com/viant/fluxor"
 	"github.com/viant/fluxor/model/graph"
 	"github.com/viant/fluxor/runtime/execution"
 	"time"
@@ -17,12 +16,22 @@ const OrchestratorContextKey = "fluxor.orchestrator"
 // Orchestrator exposes programmatic fan-out/fan-in helpers that tasks can use
 // from inside their action implementation.
 type Orchestrator struct {
-	rt *fluxor.Runtime
+	rt Runtime
+}
+
+// Runtime abstracts the minimal subset of fluxor.Runtime used by the
+// orchestrator.  It is intentionally declared locally to avoid an import
+// cycle between the root module and this package.
+type Runtime interface {
+	EmitExecutions(ctx context.Context, parent *execution.Execution, children []*execution.Execution) (string, error)
+	WaitForUnblock(ctx context.Context, execID string, timeout time.Duration) (*execution.Execution, error)
+	AwaitGroup(ctx context.Context, id string, timeout time.Duration) ([]interface{}, error)
+	ScheduleExecution(ctx context.Context, exec *execution.Execution) (func(duration time.Duration) (*execution.Execution, error), error)
 }
 
 // NewOrchestrator wraps the provided runtime to expose programmatic emit/await
 // APIs to task code.
-func New(rt *fluxor.Runtime) *Orchestrator {
+func New(rt Runtime) *Orchestrator {
 	if rt == nil {
 		return nil
 	}
