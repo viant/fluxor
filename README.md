@@ -160,13 +160,13 @@ pipeline:
         location: children
         context:
           iteration: $i
-    body:
-      action: printer:print
-      input:
-        message: 'Iteration: $i'
-      goto:
-        when: i < 3
-        task: loop
+  body:
+    action: printer:print
+    input:
+      message: 'Iteration: $i'
+    goto:
+      when: i < 3
+      task: loop
 
   stop:
     action: printer:print
@@ -480,3 +480,33 @@ Fluxor is licensed under the [LICENSE](LICENSE) file in the root directory of th
 ---
 
 © 2012-2023 Viant, inc. All rights reserved.
+
+### When/GoTo predicates with matcher functions
+
+Fluxor provides unambiguous helper functions for string matching inside `when:` and `goto:` predicates:
+
+- matcher.contains(left, right) — substring match
+- matcher.not_contains(left, right) — negated substring match
+- matcher.regexpr(left, pattern) — regular expression match
+- matcher.not_regexpr(left, pattern) — negated regex match
+
+Example: continue the loop while the index is below 10 or the text has a digit 8:
+
+```yaml
+init:
+  i: 0
+  text: value-18
+
+pipeline:
+  loop:
+    action: printer:print
+    input:
+      message: 'Iteration: $i ($text)'
+    post:
+      i: ${i + 1}
+    goto:
+      when: i < 10 || matcher.regexpr(text, '8')
+      task: loop
+```
+
+Note: for compatibility, older DSL forms `left ~/pattern/` and `left /contains/ right` are also recognized, but the `matcher.*` functions are preferred because they avoid ambiguity.

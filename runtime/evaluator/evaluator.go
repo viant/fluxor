@@ -348,6 +348,11 @@ func containsExpressionOperators(s string) bool {
 // Evaluate evaluates a mathematical or logical expression
 // For example: "i + 1" or "bar.goo / foo.z" or "foo.z * (1 + bar.zoo)"
 func Evaluate(expr string, from map[string]interface{}) interface{} {
+	// Preprocess custom operators like contains (/contains/, /not_contains/, !/contains/) and regex match (~/.../ and !~/.../)
+	expr = preprocessCustomOperators(expr, from)
+	// Preprocess matcher functions matcher.contains, matcher.not_contains, matcher.regexpr, matcher.not_regexpr
+	expr = preprocessMatcherFunctions(expr, from)
+
 	// Replace variable references with their values
 	processedExpr := processExpressionVariables(expr, from)
 
@@ -361,6 +366,438 @@ func Evaluate(expr string, from map[string]interface{}) interface{} {
 	// Evaluate the expression
 	result := evaluateAst(e)
 	return result
+}
+
+// preprocessCustomOperators replaces custom DSL operators with boolean literals (true/false)
+// Supported operators:
+//   - Regex:   <lhs> ~/pattern/   and   <lhs> !~/pattern/
+//   - Contains: <lhs> /contains/ <rhs>
+//     <lhs> !/contains/ <rhs>
+//     <lhs> /not_contains/ <rhs>
+//
+// The function repeatedly searches and evaluates these operators, replacing them with true/false
+func preprocessCustomOperators(expr string, vars map[string]interface{}) string {
+	s := expr
+	for {
+		// find next regex operator first
+		if idx, neg, ok := findNextRegexOp(s); ok {
+			lhsStart := scanLeftOperandStart(s, idx)
+			lhs := strings.TrimSpace(s[lhsStart:idx])
+			patStart := idx + 2 // for "~/" or after negation handled in findNextRegexOp
+			if neg {
+				patStart = idx + 3 // for "!~/"
+			}
+			patEnd := strings.Index(s[patStart:], "/")
+			if patEnd == -1 {
+				return s
+			}
+			patEnd = patStart + patEnd
+			pattern := s[patStart:patEnd]
+			matched := matchRegex(lhs, pattern, vars)
+			if neg {
+				matched = !matched
+			}
+			s = s[:lhsStart] + strconv.FormatBool(matched) + s[patEnd+1:]
+			continue
+		}
+
+		// find next generic slash operator like /contains/ or /not_contains/
+		if idx, opName, opEnd, neg, ok := findNextSlashOp(s); ok {
+			lhsStart := scanLeftOperandStart(s, idx)
+			lhs := strings.TrimSpace(s[lhsStart:idx])
+
+			rhsStart := opEnd
+			for rhsStart < len(s) && isSpace(s[rhsStart]) {
+				rhsStart++
+			}
+			rhs, rhsEnd := parseRightOperand(s, rhsStart)
+
+			// evaluate via operator map
+			result := evalSlashOperator(opName, lhs, rhs, vars)
+			if neg {
+				result = !result
+			}
+			s = s[:lhsStart] + strconv.FormatBool(result) + s[rhsEnd:]
+			continue
+		}
+		break
+	}
+	return s
+}
+
+// findNextRegexOp locates the next occurrence of "~/" or "!~/" and returns its index and negation status
+func findNextRegexOp(s string) (int, bool, bool) {
+	i1 := strings.Index(s, "!~/")
+	i2 := strings.Index(s, "~/")
+	if i1 == -1 && i2 == -1 {
+		return -1, false, false
+	}
+	if i1 != -1 && (i2 == -1 || i1 < i2) {
+		return i1, true, true
+	}
+	return i2, false, true
+}
+
+// findNextSlashOp finds patterns like "/opName/" or "!/opName/" and returns:
+// idx: start of the token (points to '/' or '!')
+// opName: the operator name between slashes
+// endPos: position right after the trailing '/'
+// neg: whether there was a leading '!'
+func findNextSlashOp(s string) (idx int, opName string, endPos int, neg bool, ok bool) {
+	for i := 0; i < len(s)-1; i++ {
+		if s[i] == '/' || (s[i] == '!' && i+1 < len(s) && s[i+1] == '/') {
+			j := i
+			neg = false
+			if s[i] == '!' {
+				neg = true
+				j = i + 1
+			}
+			// j points to '/'
+			k := j + 1
+			if k >= len(s) || !isAlphaUnderscore(s[k]) {
+				continue
+			}
+			// read name
+			nameStart := k
+			k++
+			for k < len(s) && isAlphaNumUnderscore(s[k]) {
+				k++
+			}
+			if k < len(s) && s[k] == '/' {
+				// ensure it's not a regex token (which is handled before) and not division
+				token := s[nameStart:k]
+				// skip catching regex: it starts with ~/ or !~/ (already processed)
+				if token == "" {
+					continue
+				}
+				// return result
+				idx = i
+				opName = token
+				endPos = k + 1
+				ok = true
+				return
+			}
+		}
+	}
+	return -1, "", -1, false, false
+}
+
+func isAlphaUnderscore(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
+}
+
+func isAlphaNumUnderscore(b byte) bool {
+	return isAlphaUnderscore(b) || (b >= '0' && b <= '9')
+}
+
+// evalSlashOperator resolves a slash operator by name
+func evalSlashOperator(name, lhs, rhs string, vars map[string]interface{}) bool {
+	switch name {
+	case "contains":
+		return containsString(lhs, rhs, vars)
+	case "not_contains":
+		return !containsString(lhs, rhs, vars)
+	default:
+		// unknown operator: return false by default
+		return false
+	}
+}
+
+// scanLeftOperandStart walks left from idx to find the start of the left operand
+func scanLeftOperandStart(s string, idx int) int {
+	i := idx - 1
+	for i >= 0 && !isLeftBoundary(s, i) {
+		i--
+	}
+	return i + 1
+}
+
+func isSpace(b byte) bool { return b == ' ' || b == '\t' || b == '\n' || b == '\r' }
+
+// isLeftBoundary reports whether position i is a boundary separating operands
+func isLeftBoundary(s string, i int) bool {
+	c := s[i]
+	switch c {
+	case ' ', '\t', '\n', '\r', '(', ')', '&', '|', '+', '-', '*', '/', '%', '=', '!', '<', '>', ',':
+		return true
+	}
+	return false
+}
+
+// parseRightOperand parses the right operand starting at pos, supporting quoted strings
+// Returns the raw operand text and the index after the operand
+func parseRightOperand(s string, pos int) (string, int) {
+	if pos >= len(s) {
+		return "", pos
+	}
+	if s[pos] == '\'' || s[pos] == '"' { // quoted string
+		quote := s[pos]
+		j := pos + 1
+		for j < len(s) {
+			if s[j] == '\\' { // escape
+				j += 2
+				continue
+			}
+			if s[j] == quote {
+				j++
+				break
+			}
+			j++
+		}
+		return s[pos:j], j
+	}
+	// unquoted token: read until boundary of logical operator or parenthesis
+	j := pos
+	for j < len(s) {
+		if isRightBoundary(s, j) {
+			break
+		}
+		j++
+	}
+	return strings.TrimSpace(s[pos:j]), j
+}
+
+// isRightBoundary checks if position j starts a boundary (e.g., &&, ||, ), whitespace then operator)
+func isRightBoundary(s string, j int) bool {
+	c := s[j]
+	switch c {
+	case ' ', '\t', '\n', '\r', ')', '(', '&', '|', '+', '-', '*', '/', '%', '=', '!', '<', '>', ',':
+		return true
+	}
+	return false
+}
+
+// containsString evaluates whether lhs contains rhs after variable/string expansion
+func containsString(lhs, rhs string, vars map[string]interface{}) bool {
+	// expand lhs
+	leftVal := expandExpression(lhs, vars)
+	leftStr := toString(leftVal)
+	// strip quotes for rhs if needed
+	rhsStr := strings.TrimSpace(rhs)
+	if len(rhsStr) >= 2 && ((rhsStr[0] == '\'' && rhsStr[len(rhsStr)-1] == '\'') || (rhsStr[0] == '"' && rhsStr[len(rhsStr)-1] == '"')) {
+		rhsStr = rhsStr[1 : len(rhsStr)-1]
+	} else {
+		// expand variable
+		rightVal := expandExpression(rhsStr, vars)
+		rhsStr = toString(rightVal)
+	}
+	if leftStr == "" {
+		return false
+	}
+	return strings.Contains(leftStr, rhsStr)
+}
+
+// matchRegex evaluates whether lhs matches the regex pattern
+func matchRegex(lhs, pattern string, vars map[string]interface{}) bool {
+	val := expandExpression(lhs, vars)
+	str := toString(val)
+	if str == "" {
+		return false
+	}
+	r, err := regexp.Compile(pattern)
+	if err != nil {
+		return false
+	}
+	return r.MatchString(str)
+}
+
+func toString(v interface{}) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	default:
+		return fmt.Sprintf("%v", t)
+	}
+}
+
+// preprocessMatcherFunctions evaluates matcher functions and replaces them with true/false literals
+// Supported: matcher.contains(lhs, rhs), matcher.not_contains(lhs, rhs), matcher.regexpr(lhs, pattern), matcher.not_regexpr(lhs, pattern)
+func preprocessMatcherFunctions(expr string, vars map[string]interface{}) string {
+	s := expr
+	for {
+		i := strings.Index(s, "matcher.")
+		if i == -1 {
+			break
+		}
+		// parse function name
+		nameStart := i + len("matcher.")
+		nameEnd := nameStart
+		for nameEnd < len(s) && isAlphaNumUnderscore(s[nameEnd]) {
+			nameEnd++
+		}
+		if nameEnd >= len(s) || s[nameEnd] != '(' {
+			// not a function call; skip this occurrence
+			// move past this 'matcher.' and continue
+			s = s[:nameStart] + s[nameStart:]
+			// advance search window by replacing prefix with itself (no-op) and continue search beyond current i
+			// To avoid infinite loop, shift i by 1
+			next := i + 1
+			if next < len(s) {
+				s = s[:next] + s[next:]
+			}
+			continue
+		}
+		funcName := s[nameStart:nameEnd]
+		// find matching ')' for the opening at nameEnd
+		open := nameEnd
+		closeIdx := findMatchingParen(s, open)
+		if closeIdx == -1 {
+			// malformed; abort preprocessing to avoid infinite loop
+			break
+		}
+		// extract args string inside (...)
+		argsStr := s[open+1 : closeIdx]
+		args := splitArgs(argsStr)
+		// evaluate based on funcName
+		var res bool
+		switch funcName {
+		case "contains":
+			if len(args) >= 2 {
+				lhs := strings.TrimSpace(args[0])
+				rhs := strings.TrimSpace(args[1])
+				res = containsString(lhs, rhs, vars)
+			}
+		case "not_contains":
+			if len(args) >= 2 {
+				lhs := strings.TrimSpace(args[0])
+				rhs := strings.TrimSpace(args[1])
+				res = !containsString(lhs, rhs, vars)
+			}
+		case "regexpr":
+			if len(args) >= 2 {
+				lhs := strings.TrimSpace(args[0])
+				rhs := strings.TrimSpace(args[1])
+				// rhs may be quoted literal; strip quotes
+				pattern := rhs
+				if len(pattern) >= 2 && ((pattern[0] == '\'' && pattern[len(pattern)-1] == '\'') || (pattern[0] == '"' && pattern[len(pattern)-1] == '"')) {
+					pattern = pattern[1 : len(pattern)-1]
+				} else {
+					// expand variable as pattern
+					pv := expandExpression(pattern, vars)
+					pattern = toString(pv)
+				}
+				res = matchRegex(lhs, pattern, vars)
+			}
+		case "not_regexpr":
+			if len(args) >= 2 {
+				lhs := strings.TrimSpace(args[0])
+				rhs := strings.TrimSpace(args[1])
+				pattern := rhs
+				if len(pattern) >= 2 && ((pattern[0] == '\'' && pattern[len(pattern)-1] == '\'') || (pattern[0] == '"' && pattern[len(pattern)-1] == '"')) {
+					pattern = pattern[1 : len(pattern)-1]
+				} else {
+					pv := expandExpression(pattern, vars)
+					pattern = toString(pv)
+				}
+				res = !matchRegex(lhs, pattern, vars)
+			}
+		default:
+			// unknown matcher function; skip it
+			// move the cursor forward to continue searching after closeIdx
+			next := closeIdx + 1
+			// advance search by replacing prefix with itself is unnecessary; just continue from next iteration
+			// To enforce replacement window, reconstruct s as is and then continue search beyond next
+			// Implement by temporarily marking a window; but simpler: cut and rejoin same string so indexes reset
+			s = s[:len(s)]
+			// Continue search after this position by slicing
+			if next < len(s) {
+				tail := s[next:]
+				s = s[:next] + tail
+			}
+			continue
+		}
+		// Replace the entire call "matcher.name(args)" with true/false
+		callStart := i
+		callEnd := closeIdx + 1
+		s = s[:callStart] + strconv.FormatBool(res) + s[callEnd:]
+	}
+	return s
+}
+
+// findMatchingParen finds the matching ')' for '(' at pos. Handles quotes and escapes.
+func findMatchingParen(s string, pos int) int {
+	if pos < 0 || pos >= len(s) || s[pos] != '(' {
+		return -1
+	}
+	depth := 0
+	inSingle := false
+	inDouble := false
+	for i := pos; i < len(s); i++ {
+		ch := s[i]
+		if ch == '\\' { // skip escaped next char within quotes
+			i++
+			continue
+		}
+		if !inDouble && ch == '\'' {
+			inSingle = !inSingle
+			continue
+		}
+		if !inSingle && ch == '"' {
+			inDouble = !inDouble
+			continue
+		}
+		if inSingle || inDouble {
+			continue
+		}
+		if ch == '(' {
+			depth++
+		} else if ch == ')' {
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// splitArgs splits a function argument list by commas, respecting quotes and parentheses
+func splitArgs(s string) []string {
+	var args []string
+	start := 0
+	depth := 0
+	inSingle := false
+	inDouble := false
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch == '\\' {
+			i++
+			continue
+		}
+		if !inDouble && ch == '\'' {
+			inSingle = !inSingle
+			continue
+		}
+		if !inSingle && ch == '"' {
+			inDouble = !inDouble
+			continue
+		}
+		if inSingle || inDouble {
+			continue
+		}
+		switch ch {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				args = append(args, strings.TrimSpace(s[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	if start <= len(s) {
+		arg := strings.TrimSpace(s[start:])
+		if arg != "" {
+			args = append(args, arg)
+		}
+	}
+	return args
 }
 
 // processExpressionVariables replaces all variable references in the expression

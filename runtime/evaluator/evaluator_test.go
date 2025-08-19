@@ -291,3 +291,133 @@ func TestSpecialFunctions(t *testing.T) {
 		}
 	})
 }
+
+func TestCustomOperators(t *testing.T) {
+	evaluator := New()
+	tests := []struct {
+		name     string
+		expr     string
+		from     map[string]interface{}
+		expected interface{}
+	}{
+		{
+			name:     "regex operator positive",
+			expr:     "{i < 10 || text ~/8/}",
+			from:     map[string]interface{}{"i": 5, "text": "value-18"},
+			expected: true,
+		},
+		{
+			name:     "regex operator negative",
+			expr:     "{i < 10 || text ~/8/}",
+			from:     map[string]interface{}{"i": 15, "text": "value-77"},
+			expected: false,
+		},
+		{
+			name:     "not regex operator",
+			expr:     "{text !~/8/}",
+			from:     map[string]interface{}{"text": "value-77"},
+			expected: true,
+		},
+		{
+			name:     "contains operator",
+			expr:     "{text /contains/ 'abc'}",
+			from:     map[string]interface{}{"text": "xxabczz"},
+			expected: true,
+		},
+		{
+			name:     "contains operator variable rhs",
+			expr:     "{text /contains/ needle}",
+			from:     map[string]interface{}{"text": "xxabczz", "needle": "abc"},
+			expected: true,
+		},
+		{
+			name:     "not contains operator bang form",
+			expr:     "{text !/contains/ 'abc'}",
+			from:     map[string]interface{}{"text": "xxzzz"},
+			expected: true,
+		},
+		{
+			name:     "not contains operator explicit token",
+			expr:     "{text /not_contains/ 'abc'}",
+			from:     map[string]interface{}{"text": "xxzzz"},
+			expected: true,
+		},
+		{
+			name:     "combined with logical and",
+			expr:     "{i >= 2 && text /contains/ 'ab' && text !~/x/}",
+			from:     map[string]interface{}{"i": 3, "text": "ab-77"},
+			expected: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := evaluator.Evaluate(tc.expr, tc.from)
+			if !reflect.DeepEqual(result, tc.expected) {
+				t.Errorf("Evaluate(%q, %v) = %v, expected %v", tc.expr, tc.from, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestMatcherFunctions(t *testing.T) {
+	evaluator := New()
+	tests := []struct {
+		name     string
+		expr     string
+		from     map[string]interface{}
+		expected interface{}
+	}{
+		{
+			name:     "matcher.contains literal",
+			expr:     "{matcher.contains(text, 'abc')}",
+			from:     map[string]interface{}{"text": "xxabczz"},
+			expected: true,
+		},
+		{
+			name:     "matcher.not_contains literal",
+			expr:     "{matcher.not_contains(text, 'abc')}",
+			from:     map[string]interface{}{"text": "xxzzz"},
+			expected: true,
+		},
+		{
+			name:     "matcher.contains variable rhs",
+			expr:     "{matcher.contains(text, needle)}",
+			from:     map[string]interface{}{"text": "xxabczz", "needle": "abc"},
+			expected: true,
+		},
+		{
+			name:     "matcher.regexpr positive",
+			expr:     "{matcher.regexpr(text, '^[a-z]+$')}",
+			from:     map[string]interface{}{"text": "abc"},
+			expected: true,
+		},
+		{
+			name:     "matcher.not_regexpr negative",
+			expr:     "{matcher.not_regexpr(text, '^[0-9]+$')}",
+			from:     map[string]interface{}{"text": "abc"},
+			expected: true,
+		},
+		{
+			name:     "combined with boolean",
+			expr:     "{i < 10 || matcher.regexpr(text, '8')}",
+			from:     map[string]interface{}{"i": 5, "text": "value-77"},
+			expected: true,
+		},
+		{
+			name:     "in ${} as well",
+			expr:     "${matcher.contains(text, 'ab') && !matcher.regexpr(text, 'x')}",
+			from:     map[string]interface{}{"text": "ab-77"},
+			expected: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := evaluator.Evaluate(tc.expr, tc.from)
+			if !reflect.DeepEqual(result, tc.expected) {
+				t.Errorf("Evaluate(%q, %v) = %v, expected %v", tc.expr, tc.from, result, tc.expected)
+			}
+		})
+	}
+}
