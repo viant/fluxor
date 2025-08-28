@@ -34,7 +34,7 @@ func (s *Service) Methods() types.Signatures {
 	return []types.Signature{
 		{
 			Name:        "apply",
-			Description: "Applies custom patch " + applySpec,
+			Description: "Applies custom patch.\n" + applySpec,
 			Input:       reflect.TypeOf(&ApplyInput{}),
 			Output:      reflect.TypeOf(&ApplyOutput{}),
 		},
