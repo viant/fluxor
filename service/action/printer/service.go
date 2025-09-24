@@ -37,6 +37,7 @@ func (s *Service) Methods() types.Signatures {
 		{
 			Name:        "print",
 			Description: "Prints the given message to standard output.",
+			Internal:    true,
 			Input:       reflect.TypeOf(&Input{}),
 			Output:      reflect.TypeOf(&Output{}),
 		},

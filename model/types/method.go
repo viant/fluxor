@@ -21,6 +21,7 @@ func (s Signatures) Lookup(name string) *Signature {
 type Signature struct {
 	Name        string
 	Description string
+	Internal    bool
 	Input       reflect.Type
 	Output      reflect.Type
 }

@@ -41,18 +41,21 @@ func (s *Service) Methods() types.Signatures {
 		{
 			Name:        "status",
 			Description: "Retrieves the current state and output of a workflow process based on its process ID.",
+			Internal:    true,
 			Input:       reflect.TypeOf(&StatusInput{}),
 			Output:      reflect.TypeOf(&RunOutput{}),
 		},
 		{
 			Name:        "run",
 			Description: "Executes a workflow with the given definition and parameters, returning the process ID, output, errors, state, and optional trace information.",
+			Internal:    true,
 			Input:       reflect.TypeOf(&RunInput{}),
 			Output:      reflect.TypeOf(&RunOutput{}),
 		},
 		{
 			Name:        "wait",
 			Description: "Polls a workflow process until completion or timeout, returning its final state, output, errors, and timing information.",
+			Internal:    true,
 			Input:       reflect.TypeOf(&WaitInput{}),
 			Output:      reflect.TypeOf(&WaitOutput{}),
 		},

@@ -33,6 +33,7 @@ func (s *Service) Methods() types.Signatures {
 		{
 			Name:        "nop",
 			Description: "Performs no operation and returns immediately.",
+			Internal:    true,
 			Input:       reflect.TypeOf(&Input{}),
 			Output:      reflect.TypeOf(&Output{}),
 		},
