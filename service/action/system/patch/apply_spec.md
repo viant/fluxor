@@ -58,3 +58,4 @@ It is important to remember:
 - You must prefix new lines with `+` even when creating a new file
 - All <relPath> values MUST be relative (never absolute)
 - If a Directory param is provided, all paths are resolved relative to that directory
+- You can't create empty hunk

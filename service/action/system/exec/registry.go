@@ -20,6 +20,12 @@ func (s *Service) Methods() types.Signatures {
 			Name: "execute",
 			Description: `Executes one or more shell commands on the local host.
 
+HARD REQUIREMENTS:
+• "commands" MUST be a non-empty array (minItems=1). Do NOT call this tool with [].
+• Each item in "commands" MUST be a non-empty string after trimming whitespace.
+• "directory" MUST be a non-empty string pointing to the agent session workdir.
+• If you do not have at least one concrete command, DO NOT call this tool; answer directly instead.
+
 • Always set "directory" to the workdir for the agent session,
   even if commands use absolute paths or include an explicit 'cd'.
   This ensures predictable and consistent execution context.
@@ -43,12 +49,12 @@ Usage constraints for file reading commands (cat, sed):
 ` + "- Single-read rule: When reading an entire small file (≤10 kB), call this tool ONCE using `cat <path>` or `sed -n '1,$p' <path>`. Do not page with multiple `sed -n 'start,endp'`." + `
 - Redundancy rule: Do not issue immediately consecutive commands that return overlapping lines from the same file. Collapse into one call.
 ` + "- Chunking rule: Only use paged `sed` ranges for large files AND provide a one-sentence justification before emitting the calls." + `
-Bad → Good (for customer.dql file with size less or equal 10kB):
+Bad → Good (for customer.dql file with size ≤10 kB):
 Bad:  sed -n '1,120p' dql/customer/customer.dql
       sed -n '1,160p' dql/customer/customer.dql
 Good: cat dql/customer/customer.dql
 
-` + "Note:\nDO NOT USE `ls -R`, `find`, `grep`  in any form as this will lead to a very slow response, and exceeding context window\nUse \\`rg\\` and \\`rg --files\\`.\nwhen using rg always use --files or --search-path\n",
+` + "Note:\nDO NOT USE `ls -R`, `find`, `grep`  in any form as this will lead to a very slow response, and exceeding the context window\nUse \\`rg\\` and \\`rg --files\\`.\nwhen using rg always use --files or --search-path\n",
 			Input:  reflect.TypeOf(&Input{}),
 			Output: reflect.TypeOf(&Output{}),
 		}}
