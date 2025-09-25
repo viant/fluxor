@@ -11,7 +11,8 @@ Behavior
 - Optional: abortOnError stops after the first non‑zero exit; env injects per-call environment variables.
 - Output includes per-command {input, output, stderr, status} and aggregated stdout/stderr; very large outputs may be truncated with a note.
 - Do not use \`ls -R\`, \`find\`, or \`grep\` - these are slow in large repos. Use \`rg\` and \`rg --files\`.
-- Never guess workspace or user '.' - always confirm with user
+- Never guess workdir - always confirm with user
+- Never use workdir as '.'
 
 Validation
 
