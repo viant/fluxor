@@ -10,6 +10,7 @@ Behavior
 - Guardrails: avoid long-running operations; set a small timeout to bound runtime. The tool may block known long-running commands without a timeout.
 - Optional: abortOnError stops after the first non‑zero exit; env injects per-call environment variables.
 - Output includes per-command {input, output, stderr, status} and aggregated stdout/stderr; very large outputs may be truncated with a note.
+- Do not use \`ls -R\`, \`find\`, or \`grep\` - these are slow in large repos. Use \`rg\` and \`rg --files\`.
 
 Validation
 
