@@ -254,7 +254,7 @@ func (p *parser) parseUpdateFile() (UpdateFile, error) {
 		}
 
 		if len(oldLines) == 0 && len(newLines) == 0 {
-			return UpdateFile{}, fmt.Errorf("empty update hunk for %s", path)
+			return UpdateFile{}, fmt.Errorf("empty update hunk for %s (hint: check for empty chunk that starts with @@ and has no content)", path)
 		}
 
 		chunks = append(chunks, UpdateChunk{
