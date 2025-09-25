@@ -40,7 +40,7 @@ func (s *Service) Methods() types.Signatures {
 		},
 		{
 			Name:        "diff",
-			Description: "Generates a unified-diff (and statistics) from two text blobs.",
+			Description: "Generates a diff from two text blobs.",
 			Input:       reflect.TypeOf(&DiffInput{}),
 			Output:      reflect.TypeOf(&DiffOutput{}),
 		},
@@ -85,7 +85,7 @@ type ApplyInput struct {
 	Patch string `json:"patch" description:"Patch text to apply (either unified-diff format or simplified patch format)"`
 	// Directory is the base directory for resolving relative paths in the patch.
 	// If not provided, paths are resolved relative to the current working directory.
-	Directory string `json:"directory" description:"Base directory for resolving relative paths in the patch"`
+	Workdir string `json:"workdir" required:"true" description:"Workdir to relative paths in the patch"`
 }
 
 // ApplyOutput summarises the changes applied.
@@ -145,7 +145,7 @@ func (s *Service) applyPatch(ctx context.Context, input *ApplyInput, output *App
 	sess := s.session
 	s.mu.Unlock()
 
-	if err := sess.ApplyPatch(ctx, input.Patch, input.Directory); err != nil {
+	if err := sess.ApplyPatch(ctx, input.Patch, input.Workdir); err != nil {
 		// rollback session and clear it
 		_ = sess.Rollback(ctx)
 		s.mu.Lock()

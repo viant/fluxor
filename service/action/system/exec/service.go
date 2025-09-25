@@ -3,6 +3,8 @@ package exec
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/viant/afs/url"
 	"github.com/viant/fluxor/service/action/system"
 	"github.com/viant/gosh"
@@ -10,10 +12,10 @@ import (
 	"github.com/viant/gosh/runner/local"
 	rssh "github.com/viant/gosh/runner/ssh"
 	"golang.org/x/crypto/ssh"
-	"time"
+
+	"strings"
 
 	"github.com/viant/scy/cred/secret"
-	"strings"
 )
 
 const timeoutCode = -101
@@ -35,7 +37,9 @@ func New() *Service {
 // Execute executes terminal commands on the target system
 func (s *Service) Execute(ctx context.Context, input *Input, output *Output) error {
 	input.Init()
-
+	if input.Workdir == "" {
+		return fmt.Errorf("workdir is required")
+	}
 	// Get or create a session for this host
 	session, err := s.getSession(ctx, input.Host, input.Env)
 	if err != nil {
@@ -44,8 +48,8 @@ func (s *Service) Execute(ctx context.Context, input *Input, output *Output) err
 	defer session.close()
 
 	// Set working directory if specified
-	if input.Directory != "" {
-		_, _, err := session.service.Run(ctx, fmt.Sprintf("cd %s", input.Directory))
+	if input.Workdir != "" {
+		_, _, err := session.service.Run(ctx, fmt.Sprintf("cd %s", input.Workdir))
 		if err != nil {
 			return fmt.Errorf("failed to change directory: %w", err)
 		}

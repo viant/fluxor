@@ -7,7 +7,7 @@ import (
 // Input represents system executor configuration
 type Input struct {
 	Host         *system.Host      `json:"host,omitempty" description:"host to execute command on"  internal:"true" `        //host to execute command on
-	Directory    string            `json:"directory,omitempty" description:"directory where this command should start" `     //directory where command should run  - if does not exists there is no exception
+	Workdir      string            `json:"workdir" required:"true" description:"directory where commands should start"`      //directory where command should run  - if does not exists there is no exception
 	Env          map[string]string `json:"env,omitempty" description:"environment variables to be set before command runs" ` //environment variables to be set before command runs
 	Commands     []string          `json:"commands,omitempty" description:"commands to execute on the target system"`        //commands to run
 	TimeoutMs    int               `json:"timeoutMs,omitempty" yaml:"timeoutMs,omitempty" description:"max wiat time before timing out command"`
