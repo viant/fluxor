@@ -20,14 +20,16 @@ Format
 - For truncated hunks, you may end with "*** End of File".
 
 Rules
-
-- Paths are relative to workdir; absolute paths are rejected with a corrective error.
-- Parent directories for Add/Move targets are created as needed inside workdir.
-- Update/Delete fail if the target does not exist.
+- When operating of file system 
+  - Never guess workdir - always confirm with user
+  - Never use workdir as '.'
+  - Paths are relative to workdir; absolute paths are rejected with a corrective error.
+  - Parent directories for Add/Move targets are created as needed inside workdir.
+  - Update/Delete fail if the target does not exist.
 - The tool validates structure and stops on the first structural error, returning a helpful message.
 
-Output
 
+Output
 - Returns status and counts of lines added/removed for the applied patch; includes an error message on failure.
 
 Example

@@ -37,9 +37,7 @@ func New() *Service {
 // Execute executes terminal commands on the target system
 func (s *Service) Execute(ctx context.Context, input *Input, output *Output) error {
 	input.Init()
-	if input.Workdir == "" {
-		return fmt.Errorf("workdir is required")
-	}
+
 	// Get or create a session for this host
 	session, err := s.getSession(ctx, input.Host, input.Env)
 	if err != nil {
@@ -47,6 +45,11 @@ func (s *Service) Execute(ctx context.Context, input *Input, output *Output) err
 	}
 	defer session.close()
 
+	if input.Workdir == "" {
+		if cmd := input.HasFSCommand(); cmd != "" {
+			return fmt.Errorf("workdir is required for " + cmd)
+		}
+	}
 	// Set working directory if specified
 	if input.Workdir != "" {
 		_, _, err := session.service.Run(ctx, fmt.Sprintf("cd %s", input.Workdir))
