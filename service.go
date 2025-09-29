@@ -2,6 +2,7 @@ package fluxor
 
 import (
 	"context"
+
 	"github.com/viant/afs"
 	"github.com/viant/afs/storage"
 	"github.com/viant/fluxor/extension"
@@ -32,8 +33,9 @@ import (
 )
 
 type Service struct {
-	config  *Config  `json:"config,omitempty"`
-	runtime *Runtime `json:"runtime,omitempty"`
+	config       *Config  `json:"config,omitempty"`
+	runtime      *Runtime `json:"runtime,omitempty"`
+	serviceProxy types.Proxy
 
 	approvalService   approval.Service
 	metaService       *meta.Service                        `json:"metaService,omitempty"`
@@ -57,7 +59,7 @@ func (s *Service) init(options []Option) {
 		option(s)
 	}
 	s.ensureBaseSetup()
-	s.actions = extension.NewActions(s.extensionTypes...)
+	s.actions = extension.NewActions(s.serviceProxy, s.extensionTypes...)
 	s.approvalService = memory.New(
 		s.runtime.taskExecutionDao,
 		memory.WithProcessDAO(s.runtime.processorDAO),

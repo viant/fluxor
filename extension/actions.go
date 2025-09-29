@@ -2,10 +2,11 @@ package extension
 
 import (
 	"fmt"
-	"github.com/viant/fluxor/model/types"
-	"github.com/viant/x"
 	"reflect"
 	"sync"
+
+	"github.com/viant/fluxor/model/types"
+	"github.com/viant/x"
 )
 
 // Actions provides action service
@@ -14,6 +15,7 @@ type Actions struct {
 	services map[string]types.Service
 	byType   map[reflect.Type]types.Service
 	mux      sync.RWMutex
+	proxy    types.Proxy
 }
 
 func (s *Actions) Services() []string {
@@ -41,6 +43,9 @@ func (s *Actions) Lookup(name string) types.Service {
 func (s *Actions) Register(service types.Service) error {
 	s.mux.Lock()
 	defer s.mux.Unlock()
+	if s.proxy != nil {
+		service = s.proxy(service)
+	}
 	_, ok := s.services[service.Name()]
 	if ok {
 		return fmt.Errorf("service %v already registered", service.Name())
@@ -72,8 +77,9 @@ func LookupService[T types.Service](actions *Actions) T {
 }
 
 // NewActions creates a new action service
-func NewActions(goTypes ...*x.Type) *Actions {
+func NewActions(proxy types.Proxy, goTypes ...*x.Type) *Actions {
 	ret := &Actions{
+		proxy:    proxy,
 		types:    NewTypes(),
 		byType:   make(map[reflect.Type]types.Service),
 		services: make(map[string]types.Service),

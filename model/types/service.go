@@ -6,3 +6,5 @@ type Service interface {
 	Methods() Signatures
 	Method(name string) (Executable, error)
 }
+
+type Proxy func(base Service) Service

@@ -45,6 +45,12 @@ func WithMetaService(service *meta.Service) Option {
 	}
 }
 
+func WithServiceProxy(proxy types.Proxy) Option {
+	return func(s *Service) {
+		s.serviceProxy = proxy
+	}
+}
+
 // WithExtensionServices sets the extension services
 func WithExtensionServices(services ...types.Service) Option {
 	return func(s *Service) {
