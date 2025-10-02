@@ -39,18 +39,15 @@ const (
 	Add    Action = "add"
 )
 
-type rollbackEntry struct {
-	action   Action
-	path     string // primary path affected
-	auxPath  string // destination for move, otherwise ""
-	tempCopy string // unique snapshot path
-}
-
 type Session struct {
-	ID        string
-	fs        afs.Service
-	tempDir   string
-	rollbacks []rollbackEntry
+	ID      string
+	fs      afs.Service
+	tempDir string
+	// proactive change tracking
+	changes   []*changeEntry
+	byCurrent map[string]*changeEntry
+	byOrigin  map[string]*changeEntry
+	order     []*changeEntry
 	committed bool
 	mu        sync.Mutex // guards committed flag and rollbacks slice
 }
@@ -79,7 +76,12 @@ func NewSession() (*Session, error) {
 		return nil, err
 	}
 
-	return &Session{ID: filepath.Base(tmp), tempDir: tmp, fs: fs}, nil
+	return &Session{ID: filepath.Base(tmp), tempDir: tmp, fs: fs,
+		changes:   []*changeEntry{},
+		byCurrent: map[string]*changeEntry{},
+		byOrigin:  map[string]*changeEntry{},
+		order:     []*changeEntry{},
+	}, nil
 }
 
 // backup now stores **one snapshot per invocation** using a timestamp‑suffix to
@@ -129,7 +131,7 @@ func (s *Session) Delete(ctx context.Context, path string) error {
 	if err := s.fs.Delete(ctx, path); err != nil {
 		return fmt.Errorf("delete: %w", err)
 	}
-	s.rollbacks = append(s.rollbacks, rollbackEntry{action: Delete, path: path, tempCopy: backup})
+	s.trackDelete(ctx, path, backup)
 	return nil
 }
 
@@ -153,7 +155,7 @@ func (s *Session) Move(ctx context.Context, src, dst string) error {
 	if err := s.fs.Move(ctx, src, dst); err != nil {
 		return err
 	}
-	s.rollbacks = append(s.rollbacks, rollbackEntry{action: Move, path: src, auxPath: dst})
+	s.trackMove(src, dst)
 	return nil
 }
 
@@ -175,7 +177,7 @@ func (s *Session) Update(ctx context.Context, path string, newData []byte) error
 	if err := s.fs.Upload(ctx, path, file.DefaultFileOsMode, bytes.NewReader(newData)); err != nil {
 		return err
 	}
-	s.rollbacks = append(s.rollbacks, rollbackEntry{action: Update, path: path, tempCopy: backup})
+	s.trackUpdate(ctx, path, backup)
 	return nil
 }
 
@@ -194,7 +196,7 @@ func (s *Session) Add(ctx context.Context, path string, data []byte) error {
 	if err := s.fs.Upload(ctx, path, file.DefaultFileOsMode, bytes.NewReader(data)); err != nil {
 		return err
 	}
-	s.rollbacks = append(s.rollbacks, rollbackEntry{action: Add, path: path})
+	s.trackAdd(ctx, path)
 	return nil
 }
 
@@ -217,48 +219,60 @@ func (s *Session) Rollback(ctx ...context.Context) error {
 
 	var rollbackErrors []error
 
-	// Process rollbacks in reverse order (newest to oldest)
-	for i := len(s.rollbacks) - 1; i >= 0; i-- {
-		r := s.rollbacks[i]
-
-		switch r.action {
-		case Delete, Update:
-			// Restore file from backup
-			data, err := s.fs.DownloadWithURL(c, r.tempCopy)
-			if err != nil {
-				rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to download backup for %s: %w", r.path, err))
-				continue
+	// Process changes in reverse order
+	for i := len(s.order) - 1; i >= 0; i-- {
+		e := s.order[i]
+		if e == nil || !e.alive || e.kind == "" {
+			continue
+		}
+		switch e.kind {
+		case "create":
+			if e.url != "" {
+				if err := s.fs.Delete(c, e.url); err != nil && !strings.Contains(strings.ToLower(err.Error()), "not found") {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback delete %s: %w", e.url, err))
+				}
 			}
-			parent, _ := url.Split(r.path, file.Scheme)
-			if err := s.fs.Create(c, parent, file.DefaultDirOsMode, true); err != nil {
-				rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to create parent directory for %s: %w", r.path, err))
-				continue
+		case "updated":
+			// move back if needed
+			if e.url != "" && e.orig != "" && e.url != e.orig {
+				// if current exists, move back
+				if exists, _ := s.fs.Exists(c, e.url); exists {
+					if err := s.fs.Move(c, e.url, e.orig); err != nil {
+						rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback move %s->%s: %v", e.url, e.orig, err))
+					}
+				}
 			}
-			if err := s.fs.Upload(c, r.path, file.DefaultFileOsMode, bytes.NewReader(data)); err != nil {
-				rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to restore %s: %w", r.path, err))
-				continue
+			// restore content if we have backup
+			if e.backup != "" && e.orig != "" {
+				data, err := s.fs.DownloadWithURL(c, e.backup)
+				if err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback read backup %s: %v", e.backup, err))
+					continue
+				}
+				parent, _ := url.Split(e.orig, file.Scheme)
+				if err := s.fs.Create(c, parent, file.DefaultDirOsMode, true); err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback mkdir %s: %v", parent, err))
+					continue
+				}
+				if err := s.fs.Upload(c, e.orig, file.DefaultFileOsMode, bytes.NewReader(data)); err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback restore %s: %v", e.orig, err))
+					continue
+				}
 			}
-
-		case Move:
-			// Check if destination exists before moving back
-			exists, _ := s.fs.Exists(c, r.auxPath)
-			if !exists {
-				rollbackErrors = append(rollbackErrors, fmt.Errorf("cannot rollback move: source %s no longer exists", r.auxPath))
-				continue
-			}
-
-			// Move file back to original location
-			if err := s.fs.Move(c, r.auxPath, r.path); err != nil {
-				rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to move %s back to %s: %w", r.auxPath, r.path, err))
-				continue
-			}
-
-		case Add:
-			// Delete added file
-			if err := s.fs.Delete(c, r.path); err != nil {
-				// Check if it's a "not found" error, which is fine for rollback of an add
-				if !strings.Contains(err.Error(), "not found") {
-					rollbackErrors = append(rollbackErrors, fmt.Errorf("failed to delete added file %s: %w", r.path, err))
+		case "delete":
+			if e.backup != "" && e.orig != "" {
+				data, err := s.fs.DownloadWithURL(c, e.backup)
+				if err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback read backup %s: %v", e.backup, err))
+					continue
+				}
+				parent, _ := url.Split(e.orig, file.Scheme)
+				if err := s.fs.Create(c, parent, file.DefaultDirOsMode, true); err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback mkdir %s: %v", parent, err))
+					continue
+				}
+				if err := s.fs.Upload(c, e.orig, file.DefaultFileOsMode, bytes.NewReader(data)); err != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback restore %s: %v", e.orig, err))
 					continue
 				}
 			}
@@ -271,7 +285,10 @@ func (s *Session) Rollback(ctx ...context.Context) error {
 	}
 
 	// Clear rollbacks regardless of errors to prevent re-attempting
-	s.rollbacks = nil
+	s.changes = nil
+	s.byCurrent = map[string]*changeEntry{}
+	s.byOrigin = map[string]*changeEntry{}
+	s.order = nil
 
 	// If there were any errors, return a combined error message
 	if len(rollbackErrors) > 0 {
@@ -303,7 +320,10 @@ func (s *Session) Commit(ctx ...context.Context) error {
 	}
 
 	s.committed = true
-	s.rollbacks = nil
+	s.changes = nil
+	s.byCurrent = map[string]*changeEntry{}
+	s.byOrigin = map[string]*changeEntry{}
+	s.order = nil
 	if err := s.fs.Delete(c, s.tempDir); err != nil {
 		return fmt.Errorf("commit cleanup: %w", err)
 	}

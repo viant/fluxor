@@ -45,6 +45,12 @@ func (s *Service) Methods() types.Signatures {
 			Output:      reflect.TypeOf(&DiffOutput{}),
 		},
 		{
+			Name:        "snapshot",
+			Description: "Returns a list of changes in the current patch session.",
+			Input:       reflect.TypeOf(&EmptyInput{}),
+			Output:      reflect.TypeOf(&SnapshotOutput{}),
+		},
+		{
 			Name:        "commit",
 			Description: "Commits  discards the rollback information, clears session.",
 			Input:       reflect.TypeOf(&EmptyInput{}),
@@ -66,6 +72,8 @@ func (s *Service) Method(name string) (types.Executable, error) {
 		return s.apply, nil
 	case "diff":
 		return s.diff, nil
+	case "snapshot":
+		return s.snapshot, nil
 	case "commit":
 		return s.commit, nil
 	case "rollback":
@@ -109,6 +117,13 @@ type DiffOutput DiffResult
 // EmptyInput/Output used by commit/rollback methods.
 type EmptyInput struct{}
 type EmptyOutput struct{}
+
+// SnapshotOutput lists the current uncommitted changes captured by the active session.
+type SnapshotOutput struct {
+	Changes []Change `json:"changes,omitempty"`
+	Status  string   `json:"status,omitempty"`
+	Error   string   `json:"error,omitempty"`
+}
 
 // -------------------------------------------------------------------------
 // method executors
@@ -217,6 +232,35 @@ func (s *Service) diff(ctx context.Context, in, out interface{}) error {
 	}
 	output.Patch = res
 	output.Stats = stats
+	return nil
+}
+
+// snapshot returns the list of changes tracked by the active session without mutating it.
+func (s *Service) snapshot(ctx context.Context, in, out interface{}) error {
+	if _, ok := in.(*EmptyInput); !ok {
+		return types.NewInvalidInputError(in)
+	}
+	output, ok := out.(*SnapshotOutput)
+	if !ok {
+		return types.NewInvalidOutputError(out)
+	}
+
+	s.mu.Lock()
+	sess := s.session
+	s.mu.Unlock()
+
+	output.Status = "ok"
+	if sess == nil {
+		output.Changes = nil
+		return nil
+	}
+
+	changes, err := sess.Snapshot(ctx)
+	if err != nil {
+		output.Status = "error"
+		output.Error = err.Error()
+	}
+	output.Changes = changes
 	return nil
 }
 
