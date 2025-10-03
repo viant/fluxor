@@ -254,6 +254,7 @@ func (s *Service) snapshot(ctx context.Context, in, out interface{}) error {
 	if sess == nil {
 		output.Changes = nil
 		output.Workdir = ""
+		output.Status = "noFound"
 		return nil
 	}
 
