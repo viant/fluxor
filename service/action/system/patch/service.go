@@ -5,16 +5,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/viant/afs"
-	"github.com/viant/afs/file"
-	"github.com/viant/afs/url"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/viant/afs"
+	"github.com/viant/afs/file"
+	"github.com/viant/afs/url"
 
 	sgdiff "github.com/sourcegraph/go-diff/diff"
 )
@@ -43,6 +44,7 @@ type Session struct {
 	ID      string
 	fs      afs.Service
 	tempDir string
+	Workdir string
 	// proactive change tracking
 	changes   []*changeEntry
 	byCurrent map[string]*changeEntry
@@ -340,6 +342,8 @@ func (s *Session) ApplyPatch(ctx context.Context, patchText string, directory ..
 	if len(directory) > 0 {
 		dir = directory[0]
 	}
+	// remember last workdir used for this session
+	s.Workdir = dir
 
 	patchText = strings.TrimSpace(patchText)
 	// Check if the patch is in the new format

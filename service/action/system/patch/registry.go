@@ -120,6 +120,7 @@ type EmptyOutput struct{}
 
 // SnapshotOutput lists the current uncommitted changes captured by the active session.
 type SnapshotOutput struct {
+	Workdir string   `json:"workdir,omitempty"`
 	Changes []Change `json:"changes,omitempty"`
 	Status  string   `json:"status,omitempty"`
 	Error   string   `json:"error,omitempty"`
@@ -252,6 +253,7 @@ func (s *Service) snapshot(ctx context.Context, in, out interface{}) error {
 	output.Status = "ok"
 	if sess == nil {
 		output.Changes = nil
+		output.Workdir = ""
 		return nil
 	}
 
@@ -260,7 +262,11 @@ func (s *Service) snapshot(ctx context.Context, in, out interface{}) error {
 		output.Status = "error"
 		output.Error = err.Error()
 	}
+	if len(changes) == 0 {
+		output.Status = "noFound"
+	}
 	output.Changes = changes
+	output.Workdir = sess.Workdir
 	return nil
 }
 
